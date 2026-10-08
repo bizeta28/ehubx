@@ -1,0 +1,19 @@
+- stages: S1
+  hubs: H1
+  ec: El
+  profile_path: profiles/imports.csv
+
+#- stages: S1
+#  hubs: H1
+#  ec: HT
+#  price: 0.1887 CHF/kWh
+#  co2: 0.21051 kg/kWh
+
+#- stages: S1
+#  hubs: H1
+#  ec: Solar
+
+- stages: S1
+  hubs: H1
+  ec: Air
+  price:  #testing putting a price on imported air to limit use of chiller, to be revised
