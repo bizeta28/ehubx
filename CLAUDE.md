@@ -24,14 +24,17 @@ value of IT flexibility. Supervisors: Gabriele Humbert, Jenny Hansson (Empa). ET
 - Run the relevant tests / the case script before declaring something done; report what you ran.
 
 ## Data — this repo is PUBLIC
-- **Never commit data**: no NEST measurements, no supervisor-provided profiles (`demands.csv`
-  etc.), no Polybox material, no results. Keep them local and git-ignored.
+- Gabriele Humbert confirmed (8 Oct 2026) that a public repo is fine and the supervisor-provided
+  case data (e.g. `examples/1_WH/inputs/`) is not sensitive, so those inputs are committed.
+- Anything **new** (raw NEST measurements, other Empa data, Polybox material): ask Bea before
+  committing. Don't commit generated results.
 - Don't commit notes about the supervisors' unpublished preprint or internal reports.
 
 ## Case layout
 - `examples/1_WH/` — baseline case (1 office building + 20 kW edge DC, waste-heat recovery),
-  run via `main_small_demo.py`; analysis scripts in `plots and print/`.
-  Time-series profiles in `inputs/basic/profiles/` are local only (not committed).
+  run via `main_small_demo.py`; inputs incl. 8760 h profiles in `inputs/basic/profiles/`.
+- Post-processing scripts in `plots and print/`: only the 1_WH case matters; disregard
+  scripts/logic for other cases (per Gabriele).
 
 ## Handoff back
 - At the end of a session, append a short entry to `docs/semester_project/CHANGES.md`:
