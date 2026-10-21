@@ -1,0 +1,997 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+# Set the scenario folder (modify for new runs)
+case_folder = "4_WH+PV+DHN+Flex"
+
+# Paths
+result_file = os.path.join("examples", case_folder, "results", "opt_vars.csv")
+output_folder = os.path.join("examples", case_folder, "plots and print", "plots", "yearly plots")
+output_folder_csv = os.path.join("examples", case_folder, "plots and print", "csv_files")
+os.makedirs(output_folder, exist_ok=True)
+os.makedirs(output_folder_csv, exist_ok=True)
+=======
+output_folder_daily = os.path.join("examples", case_folder, "plots and print", "plots", "daily plots")
+os.makedirs(output_folder, exist_ok=True)
+os.makedirs(output_folder_daily, exist_ok=True)
+
+# Load data
+data = pd.read_csv(result_file, low_memory=False)
+
+# Function to expand and fill time series data
+def expand_and_fill_data(df, ec_value, var_name):
+    full_range = pd.DataFrame({'S_Time': range(1, 8761)})
+    expanded_df = pd.merge(full_range, df, on='S_Time', how='left')
+    expanded_df['var_name'] = expanded_df['var_name'].fillna(var_name)
+    expanded_df['var_value'] = expanded_df['var_value'].fillna(0)
+    expanded_df['S_Stage'] = expanded_df['S_Stage'].fillna('S1')
+    expanded_df['S_Hub'] = expanded_df['S_Hub'].fillna('H1')
+    expanded_df['S_Ec'] = expanded_df['S_Ec'].fillna(ec_value)
+    expanded_df.sort_values('S_Time', inplace=True)
+    expanded_df.reset_index(drop=True, inplace=True)
+    return expanded_df
+
+# --- Load LT data ---
+LT_DemandData = expand_and_fill_data(data[(data['S_Ec'] == 'LT') & (data['var_name'] == 'V_DemandSupply')], 'LT', 'V_DemandSupply')
+LT_Chiller = expand_and_fill_data(data[(data['S_Ec'] == 'LT') & (data['S_Tech'] == 'Chiller') & (data['var_name'] == 'V_ConvTechOut')], 'LT', 'V_ConvTechOut')
+LT_OutHE_AW = expand_and_fill_data(data[(data['S_Ec'] == 'LT') & (data['S_Tech'] == 'HE_AW') & (data['var_name'] == 'V_ConvTechOut')], 'LT', 'V_ConvTechOut')
+LT_OutTESLT = expand_and_fill_data(data[(data['S_Tech'] == 'TESLT') & (data['var_name'] == 'V_StorTechOutflow')], 'LT', 'V_StorTechOutflow')
+LT_InTESLT = expand_and_fill_data(data[(data['S_Tech'] == 'TESLT') & (data['var_name'] == 'V_StorTechInflow')], 'LT', 'V_StorTechInflow')
+LT_BalanceTESLT_vals = LT_OutTESLT['var_value'] - LT_InTESLT['var_value']
+
+valuesLT_df = pd.DataFrame({
+    'Demand': LT_DemandData['var_value'],
+    'Chiller': LT_Chiller['var_value'],
+    'LT_OutHE_AW': LT_OutHE_AW['var_value'],
+    'Storage Balance': LT_BalanceTESLT_vals
+})
+
+<<<<<<< HEAD
+csv_path = os.path.join(output_folder_csv, "LT_values.csv")
+=======
+csv_path = os.path.join(output_folder, "LT_values.csv")
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+valuesLT_df.to_csv(csv_path, index=False)
+print("Values data saved to:", csv_path)
+
+# Use only the numeric values for logic
+LT_Chiller_vals = LT_Chiller['var_value']
+LT_OutHE_AW_vals = LT_OutHE_AW['var_value']
+
+# Compute shares for Logic 3
+total = LT_Chiller_vals + LT_OutHE_AW_vals
+total_nozero = total.replace(0, np.nan)  # temporarily replace 0 with NaN to avoid division by zero
+Share_Chiller = LT_Chiller_vals / total_nozero
+Share_HE_AW = LT_OutHE_AW_vals / total_nozero
+Share_Chiller = Share_Chiller.fillna(0)
+Share_HE_AW = Share_HE_AW.fillna(0)
+
+<<<<<<< HEAD
+# Calculate the internal use of MT temp level
+Internal_use = np.maximum(-LT_BalanceTESLT_vals, 0)
+=======
+# Calculate the internal use of LT temp level
+Internal_use = np.maximum(-LT_BalanceTESLT_vals,0)
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+
+# Calculate storage discharge
+Storage_discharge = np.maximum(LT_BalanceTESLT_vals, 0)
+
+# Calculate Chiller serving demand
+Chiller_serving_demand = np.maximum(LT_Chiller_vals - Internal_use*Share_Chiller, 0)
+
+# Calculate HE_AW serving demand
+HE_AW_serving_demand = np.maximum(LT_OutHE_AW_vals - Internal_use*Share_HE_AW, 0)
+
+# Calculate the supposed supply
+Supposed_supply = Chiller_serving_demand + HE_AW_serving_demand + Storage_discharge
+
+logicLT_df = pd.DataFrame({
+'Internal Use': Internal_use,
+'Storage Discharge': Storage_discharge,
+'Chiller Serving Demand': Chiller_serving_demand,
+'HE_AW Serving Demand': HE_AW_serving_demand,
+<<<<<<< HEAD
+'Supposed Supply': Supposed_supply
+})
+
+csv_path = os.path.join(output_folder_csv, "LT_logics.csv")
+=======
+'Supposed Supply': Supposed_supply,
+})
+
+
+# # Logic 1: If LT_Chiller > 0 and LT_OutHE_AW < 0 -> LT_Chiller, Chiller
+# Logic1 = np.where((LT_Chiller_vals > 0) & (LT_OutHE_AW_vals <= 0), LT_Chiller_vals, 0)
+
+# # Logic 2: If LT_Chiller < 0 and LT_OutHE_AW > 0 -> LT_OutHE_AW, HE_AW
+# Logic2 = np.where((LT_Chiller_vals <= 0) & (LT_OutHE_AW_vals > 0), LT_OutHE_AW_vals, 0)
+
+# # Logic 3: If LT_Chiller >0 and LT_OutHE_AW >0 -> LT_Chiller - (LT_OutTESLT - LT_InTESLT), multiplied by shares
+# Logic3_1 = np.where((LT_Chiller_vals > 0) & (LT_OutHE_AW_vals > 0),
+#                     LT_Chiller_vals + LT_BalanceTESLT_vals * Share_Chiller,
+#                     0) # Logic 3.1: Chiller part of the logic
+
+# Logic3_2 = np.where((LT_Chiller_vals > 0) & (LT_OutHE_AW_vals > 0),
+#                     LT_OutHE_AW_vals + LT_BalanceTESLT_vals * Share_HE_AW,
+#                     0) # Logic 3.2: HE_AW part of the logic
+
+# # Logic 4: If Logic2 > 0 and LT_BalanceTESLT_vals > 0 -> Logic2 + LT_BalanceTESLT_vals, HE_AW
+# Logic4 = np.where((Logic2 > 0) & (LT_BalanceTESLT_vals <= 0), Logic2 + LT_BalanceTESLT_vals, 0)
+
+# # Logic 5: If Logic1 > 0 and LT_BalanceTESLT_vals < 0 -> Logic1 + LT_BalanceTESLT_vals, Chiller
+# Logic5 = np.where((Logic1 > 0) & (LT_BalanceTESLT_vals <= 0), Logic1 + LT_BalanceTESLT_vals, 0)
+
+# # Logic 6: If LT_Chiller < 0 and LT_OutHE_AW < 0 -> LT_BalanceTESLT_vals
+# Logic6 = np.where((LT_BalanceTESLT_vals > 0), LT_BalanceTESLT_vals, 0)
+
+# Combined_logic = Logic3_1 + Logic3_2 + Logic4 + Logic5 + Logic6
+
+# logicLT_df = pd.DataFrame({
+#     'Logic1': Logic1,
+#     'Logic2': Logic2,
+#     'Logic3.1': Logic3_1,
+#     'Logic3.2': Logic3_2,
+#     'Logic4': Logic4,
+#     'Logic5': Logic5,
+#     'Storage': Logic6,
+#     'Chiller': Logic3_1 + Logic5,
+#     'HE_AW': Logic3_2 + Logic4,
+#     'Combined_logic': Combined_logic,
+# })
+
+csv_path = os.path.join(output_folder, "LT_logics.csv")
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+logicLT_df.to_csv(csv_path, index=False)
+print("Logic data saved to:", csv_path)
+
+# # Check to see if supply = demand
+# # Round both columns to integers
+# combined_rounded = Supposed_supply.round(0).astype(int)
+# demand_rounded = valuesLT_df['Demand'].round(0).astype(int)
+
+# # Filter rows where they are not equal
+# not_equal_rows = logicLT_df[combined_rounded != demand_rounded]
+
+# # Display the result
+# if not_equal_rows.empty:
+#     print("✅ Supply equals demand (within rounding).")
+# else:
+#     print("❌ Mismatch detected:")
+#     print(not_equal_rows)
+
+
+# Ensure proper hourly datetime index (instead of converting integers directly)
+time_index = pd.date_range(start='2023-01-01', periods=8760, freq='h')
+
+# Plot supply as stackplot
+plt.figure(figsize=(15,6))
+
+plt.stackplot(
+    time_index,
+    logicLT_df['HE_AW Serving Demand'],
+    logicLT_df['Chiller Serving Demand'],
+    logicLT_df['Storage Discharge'],
+<<<<<<< HEAD
+    labels=['HE_AW', 'Chiller', 'Storage Discharge'],
+=======
+    labels=['HE_AW', 'Chiller', 'Storage'],
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+    colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+)
+
+# # Plot demand as line on top
+# plt.plot(
+#     time_index,
+#     valuesLT_df['Demand'],
+#     color='black',
+#     linewidth=1.2,
+#     label='Demand'
+# )
+
+# Month ticks
+month_positions = pd.date_range(start='2023-01-01', periods=12, freq='MS')
+month_labels = ['Jan','Feb','Mar','Apr','May','Jun',
+                'Jul','Aug','Sep','Oct','Nov','Dec']
+
+plt.xticks(month_positions, month_labels)
+
+plt.xlabel('Month')
+<<<<<<< HEAD
+plt.ylabel('Energy (kWh)')
+# plt.title('Hourly Supply vs Demand (LT)')
+=======
+plt.ylabel('Value')
+plt.title('Hourly Supply vs Demand (LT)')
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig(os.path.join(output_folder, 'demand_plotLT.png'), dpi=300)
+plt.show()
+
+print("Plot saved to:", os.path.join(output_folder, 'demand_plotLT.png'))
+
+
+# # --- Load MT data ---
+MT_DemandData = expand_and_fill_data(data[(data['S_Ec'] == 'MT') & (data['var_name'] == 'V_DemandSupply')], 'MT', 'V_DemandSupply')
+MT_OutHP_AW = expand_and_fill_data(data[(data['S_Ec'] == 'MT') & (data['S_Tech'] == 'HP_AW') & (data['var_name'] == 'V_ConvTechOut')], 'MT', 'V_ConvTechOut')
+MT_OutHE_WW = expand_and_fill_data(data[(data['S_Ec'] == 'MT') & (data['S_Tech'] == 'HE_WW') & (data['var_name'] == 'V_ConvTechOut')], 'MT', 'V_ConvTechOut')
+MT_InHP_WW = expand_and_fill_data(data[(data['S_Ec'] == 'MT') & (data['S_Tech'] == 'HP_WW') & (data['var_name'] == 'V_HpTechIn')], 'MT', 'V_ConvTechIn')
+MT_InHE_LT = expand_and_fill_data(data[(data['S_Ec'] == 'MT') & (data['S_Tech'] == 'HE_LT') & (data['var_name'] == 'V_ConvTechIn')], 'MT', 'V_ConvTechIn')
+MT_InTESMT = expand_and_fill_data(data[(data['S_Tech'] == 'TESMT') & (data['var_name'] == 'V_StorTechInflow')], 'MT', 'V_StorTechInflow')
+MT_OutTESMT = expand_and_fill_data(data[(data['S_Tech'] == 'TESMT') & (data['var_name'] == 'V_StorTechOutflow')], 'MT', 'V_StorTechOutflow')
+MT_BalanceTESMT_vals = MT_OutTESMT['var_value'] - MT_InTESMT['var_value']
+
+valuesMT_df = pd.DataFrame({
+    'Demand': MT_DemandData['var_value'],
+    'HP_AW': MT_OutHP_AW['var_value'],
+    'HE_WW': MT_OutHE_WW['var_value'],
+    'HP_WW': MT_InHP_WW['var_value'],
+    'HE_LT': MT_InHE_LT['var_value'],
+    'Storage Balance': MT_BalanceTESMT_vals
+})
+
+<<<<<<< HEAD
+csv_path = os.path.join(output_folder_csv, "MT_values.csv")
+=======
+csv_path = os.path.join(output_folder, "MT_values.csv")
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+valuesMT_df.to_csv(csv_path, index=False)
+print("Values data saved to:", csv_path)
+
+# Use only the numeric values for logic
+MT_OutHP_AW_vals = MT_OutHP_AW['var_value']
+MT_OutHE_WW_vals = MT_OutHE_WW['var_value']
+MT_InHP_WW_vals = MT_InHP_WW['var_value']
+MT_InHE_LT_vals = MT_InHE_LT['var_value']
+
+# Compute shares for HP_AW and HE_WW (production technologies)
+total = MT_OutHP_AW_vals + MT_OutHE_WW_vals
+total_nozero = total.replace(0, np.nan)  # temporarily replace 0 with NaN to avoid division by zero
+Share_HE_WW = MT_OutHE_WW_vals / total_nozero
+Share_HP_AW = MT_OutHP_AW_vals / total_nozero
+Share_HE_WW = Share_HE_WW.fillna(0)
+Share_HP_AW = Share_HP_AW.fillna(0)
+
+# Calculate the internal use of MT temp level
+Internal_use = MT_InHE_LT_vals + MT_InHP_WW_vals + np.maximum(-MT_BalanceTESMT_vals, 0)
+
+# Calculate storage discharge
+Storage_discharge = np.maximum(MT_BalanceTESMT_vals, 0)
+
+# Calculate HE_WW serving demand
+HE_WW_serving_demand = np.maximum(MT_OutHE_WW_vals - Internal_use*Share_HE_WW, 0)
+
+# Calculate Hp_AW serving demand
+HP_AW_serving_demand = np.maximum(MT_OutHP_AW_vals - Internal_use*Share_HP_AW, 0)
+
+# Calculate the supposed supply
+Supposed_supply = HE_WW_serving_demand + HP_AW_serving_demand + Storage_discharge
+
+logicMT_df = pd.DataFrame({
+'Internal Use': Internal_use,
+'Storage Discharge': Storage_discharge,
+'HE_WW Serving Demand': HE_WW_serving_demand,
+'HP_AW Serving Demand': HP_AW_serving_demand,
+'Supposed Supply': Supposed_supply,
+})
+
+<<<<<<< HEAD
+csv_path = os.path.join(output_folder_csv, "MT_logics.csv")
+=======
+csv_path = os.path.join(output_folder, "MT_logics.csv")
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+logicMT_df.to_csv(csv_path, index=False)
+print("Logic data saved to:", csv_path)
+
+# # Check to see if supply = demand
+# # Round both columns to integers
+# combined_rounded = Supposed_supply.round(1)
+# demand_rounded = valuesMT_df['Demand'].round(1)
+
+# # Filter rows where they are not equal
+# not_equal_rows = valuesMT_df[combined_rounded != demand_rounded]
+
+# # Display the result
+# if not_equal_rows.empty:
+#     print("✅ Supply equals demand (within rounding).")
+# else:
+#     print("❌ Mismatch detected:")
+#     print(not_equal_rows)
+
+# Ensure proper hourly datetime index (instead of converting integers directly)
+time_index = pd.date_range(start='2023-01-01', periods=8760, freq='h')
+
+# Plot supply as stackplot
+plt.figure(figsize=(15,6))
+
+plt.stackplot(
+    time_index,
+    logicMT_df['HE_WW Serving Demand'],
+    logicMT_df['HP_AW Serving Demand'],
+    logicMT_df['Storage Discharge'],
+    labels=['HE_WW Serving Demand', 'HP_AW Serving Demand', 'Storage Discharge'],
+    colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+)
+
+# # Plot demand as line on top
+# plt.plot(
+#     time_index,
+#     valuesMT_df['Demand'],
+#     color='black',
+#     linewidth=1.2,
+#     label='Demand'
+# )
+
+# Month ticks
+month_positions = pd.date_range(start='2023-01-01', periods=12, freq='MS')
+month_labels = ['Jan','Feb','Mar','Apr','May','Jun',
+                'Jul','Aug','Sep','Oct','Nov','Dec']
+
+plt.xticks(month_positions, month_labels)
+
+plt.xlabel('Month')
+<<<<<<< HEAD
+plt.ylabel('Energy (kWh)')
+# plt.title('Hourly Supply vs Demand (MT)')
+=======
+plt.ylabel('Value')
+plt.title('Hourly Supply vs Demand (LT)')
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig(os.path.join(output_folder, 'demand_plotMT.png'), dpi=300)
+plt.show()
+
+print("Plot saved to:", os.path.join(output_folder, 'demand_plotMT.png'))
+
+# # --- Load HT data ---
+HT_DemandData = expand_and_fill_data(data[(data['S_Ec'] == 'HT') & (data['var_name'] == 'V_DemandSupply')], 'HT', 'V_DemandSupply')
+HT_Import = expand_and_fill_data(data[(data['S_Ec'] == 'HT') & (data['var_name'] == 'V_Imp')], 'HT', 'V_Imp')
+HT_Export = expand_and_fill_data(data[(data['S_Ec'] == 'HT') & (data['var_name'] == 'V_Exp')], 'HT', 'V_Exp')
+HT_CS_hybrid = expand_and_fill_data(data[(data['S_Ec'] == 'HT') & (data['S_Tech'] == 'CS_hybrid') & (data['var_name'] == 'V_ConvTechOut')], 'HT', 'V_ConvTechOut')
+HT_InHE_WW = expand_and_fill_data(data[(data['S_Ec'] == 'HT') & (data['S_Tech'] == 'HE_WW') & (data['var_name'] == 'V_ConvTechIn')], 'HT', 'V_ConvTechIn')
+<<<<<<< HEAD
+HT_OutHP_WW = expand_and_fill_data(data[(data['S_Ec'] == 'HT') & (data['S_Tech'] == 'HP_WW') & (data['var_name'] == 'V_ConvTechOut')], 'HT', 'V_ConvTechOut')
+=======
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+HT_InTESHT = expand_and_fill_data(data[(data['S_Tech'] == 'TESHT') & (data['var_name'] == 'V_StorTechInflow')], 'HT', 'V_StorTechInflow')
+HT_OutTESHT = expand_and_fill_data(data[(data['S_Tech'] == 'TESHT') & (data['var_name'] == 'V_StorTechOutflow')], 'HT', 'V_StorTechOutflow')
+HT_BalanceTESHT_vals = HT_OutTESHT['var_value'] - HT_InTESHT['var_value']
+
+valuesHT_df = pd.DataFrame({
+    'Demand': HT_DemandData['var_value'],
+    'Import': HT_Import['var_value'],
+    'Export': HT_Export['var_value'],
+    'CS_hybrid': HT_CS_hybrid['var_value'],
+    'HE_WW': HT_InHE_WW['var_value'],
+<<<<<<< HEAD
+    'HP_WW': HT_OutHP_WW['var_value'],
+    'Storage Balance': HT_BalanceTESHT_vals
+})
+
+csv_path = os.path.join(output_folder_csv, "HT_values.csv")
+=======
+    'Storage Balance': HT_BalanceTESHT_vals
+})
+
+csv_path = os.path.join(output_folder, "HT_values.csv")
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+valuesHT_df.to_csv(csv_path, index=False)
+print("Values data saved to:", csv_path)
+
+# Use only the numeric values for logic
+HT_Import_vals = HT_Import['var_value']
+HT_Export_vals = HT_Export['var_value']
+HT_CS_hybrid_vals = HT_CS_hybrid['var_value']
+HT_InHE_WW_vals = HT_InHE_WW['var_value']
+<<<<<<< HEAD
+HT_OutHP_WW_vals = HT_OutHP_WW['var_value']
+=======
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+
+# Compute shares for CS_hybrid and Import (production technologies)
+total = HT_CS_hybrid_vals + HT_Import_vals
+total_nozero = total.replace(0, np.nan)  # temporarily replace 0 with NaN to avoid division by zero
+Share_CS_hybrid = HT_CS_hybrid_vals / total_nozero
+Share_Import = HT_Import_vals / total_nozero
+Share_CS_hybrid = Share_CS_hybrid.fillna(0)
+Share_Import = Share_Import.fillna(0)
+
+<<<<<<< HEAD
+# Calculare storage discharge when only serving demand and not HE_WW
+Storage_discharge = np.maximum(HT_BalanceTESHT_vals, 0)
+Storage_discharge_to_serving_demand_only = np.where(Storage_discharge <= HT_DemandData['var_value'], Storage_discharge, 0)
+
+# Calculate storage dischare to internal use
+Storage_discharge_to_internal_use = np.where(Storage_discharge > HT_DemandData['var_value'], Storage_discharge - HT_DemandData['var_value'], 0)
+Storage_discharge_to_serving_demand = np.where(Storage_discharge > HT_DemandData['var_value'], HT_DemandData['var_value'], 0)
+
+# Calculate HP_WW supply (considered as supply, not internal use, since it's an output)
+HT_HP_WW_supply_internal = np.where((HT_DemandData['var_value'] == 0), HT_OutHP_WW_vals, 0)
+HT_HP_WW_supply_supply = np.where((HT_DemandData['var_value'] > 0), HT_OutHP_WW_vals, 0)
+
+# Calculate the internal use of MT temp level
+Internal_use = HT_InHE_WW_vals + HT_Export_vals + np.maximum(-HT_BalanceTESHT_vals, 0) + HT_HP_WW_supply_internal + Storage_discharge_to_internal_use
+=======
+# Calculate the internal use of MT temp level
+Internal_use = HT_InHE_WW_vals + HT_Export_vals + np.maximum(-HT_BalanceTESHT_vals, 0)
+
+# Calculare storage discharge
+Storage_discharge = np.maximum(HT_BalanceTESHT_vals, 0)
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+
+# Calculate CS_hybrid serving demand
+CS_hybrid_serving_demand = np.maximum(HT_CS_hybrid_vals - Internal_use*Share_CS_hybrid, 0)
+
+# Calculate Import serving demand
+Import_serving_demand = np.maximum(HT_Import_vals - Internal_use*Share_Import, 0)
+
+# Calculate the supposed supply
+<<<<<<< HEAD
+Supposed_supply = CS_hybrid_serving_demand + Import_serving_demand + Storage_discharge_to_serving_demand_only + Storage_discharge_to_serving_demand + HT_HP_WW_supply_supply  # HP_WW supply is added to total supply, not internal use
+
+Storage_discharge_plot = np.where(Storage_discharge_to_serving_demand_only > 0 , Storage_discharge_to_serving_demand_only, Storage_discharge_to_serving_demand)
+
+logicHT_df = pd.DataFrame({
+'Internal Use': Internal_use,
+'Storage Discharge to Demand Only': Storage_discharge_to_serving_demand_only,
+'Storage Discharge to Internal Use': Storage_discharge_to_internal_use,
+'Remaining Storage Discharge to Serving Demand': Storage_discharge_to_serving_demand,
+'Plotted Storage Discharge': Storage_discharge_plot,
+'HP_WW Internal': HT_HP_WW_supply_internal,
+'HP_WW Supply': HT_HP_WW_supply_supply,
+=======
+Supposed_supply = CS_hybrid_serving_demand + Import_serving_demand + Storage_discharge
+
+logicHT_df = pd.DataFrame({
+'Internal Use': Internal_use,
+'Storage Discharge': Storage_discharge,
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+'CS_hybrid Serving Demand': CS_hybrid_serving_demand,
+'Import Serving Demand': Import_serving_demand,
+'Supposed Supply': Supposed_supply,
+})
+
+<<<<<<< HEAD
+csv_path = os.path.join(output_folder_csv, "HT_logics.csv")
+=======
+csv_path = os.path.join(output_folder, "HT_logics.csv")
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+logicHT_df.to_csv(csv_path, index=False)
+print("Logic data saved to:", csv_path)
+
+# # Check to see if supply = demand
+# # Round both columns to integers
+# combined_rounded = Supposed_supply.round(0).astype(int)
+# demand_rounded = valuesHT_df['Demand'].round(0).astype(int)
+
+# # Filter rows where they are not equal
+<<<<<<< HEAD
+# not_equal_rows = valuesHT_df[combined_rounded != demand_rounded]
+=======
+# not_equal_rows = valuesMT_df[combined_rounded != demand_rounded]
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+
+# # Display the result
+# if not_equal_rows.empty:
+#     print("✅ Supply equals demand (within rounding).")
+# else:
+#     print("❌ Mismatch detected:")
+#     print(not_equal_rows)
+
+# Ensure proper hourly datetime index (instead of converting integers directly)
+time_index = pd.date_range(start='2023-01-01', periods=8760, freq='h')
+
+# Plot supply as stackplot
+plt.figure(figsize=(15,6))
+
+plt.stackplot(
+    time_index,
+    logicHT_df['CS_hybrid Serving Demand'],
+    logicHT_df['Import Serving Demand'],
+<<<<<<< HEAD
+    logicHT_df['HP_WW Supply'],
+    logicHT_df['Plotted Storage Discharge'],
+    labels=['CS_hybrid Serving Demand', 'Import Serving Demand', 'HP_WW Supply', 'Storage Discharge'],
+    colors=['#1f77b4', '#ff7f0e', '#d62728', '#2ca02c']
+=======
+    logicHT_df['Storage Discharge'],
+    labels=['CS_hybrid Serving Demand', 'Import Serving Demand', 'Storage Discharge'],
+    colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+)
+
+# # Plot demand as line on top
+# plt.plot(
+#     time_index,
+#     valuesHT_df['Demand'],
+#     color='black',
+#     linewidth=.2,
+#     label='Demand'
+# )
+
+# Month ticks
+month_positions = pd.date_range(start='2023-01-01', periods=12, freq='MS')
+month_labels = ['Jan','Feb','Mar','Apr','May','Jun',
+                'Jul','Aug','Sep','Oct','Nov','Dec']
+
+plt.xticks(month_positions, month_labels)
+
+plt.xlabel('Month')
+<<<<<<< HEAD
+plt.ylabel('Energy (kWh)')
+# plt.title('Hourly Supply vs Demand (HT)')
+=======
+plt.ylabel('Value')
+plt.title('Hourly Supply vs Demand (LT)')
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig(os.path.join(output_folder, 'demand_plotHT.png'), dpi=300)
+plt.show()
+
+print("Plot saved to:", os.path.join(output_folder, 'demand_plotHT.png'))
+
+
+<<<<<<< HEAD
+# ==========================
+# Combined LT / MT / HT plot
+# ==========================
+
+time_index = pd.date_range(start='2023-01-01', periods=8760, freq='h')
+
+month_positions = pd.date_range(start='2023-01-01', periods=12, freq='MS')
+month_labels = ['Jan','Feb','Mar','Apr','May','Jun',
+                'Jul','Aug','Sep','Oct','Nov','Dec']
+
+fig, axes = plt.subplots(3, 1, figsize=(18, 12), sharex=True)
+
+# -----------------
+# LT
+# -----------------
+axes[0].stackplot(
+    time_index,
+    logicLT_df['HE_AW Serving Demand'],
+    logicLT_df['Chiller Serving Demand'],
+    logicLT_df['Storage Discharge'],
+    labels=['HE_AW', 'Chiller', 'Storage Discharge']
+)
+
+axes[0].set_title('LT Supply')
+axes[0].set_ylabel('Energy (kWh)')
+axes[0].legend(loc='upper right')
+axes[0].grid(True, alpha=0.3)
+
+# -----------------
+# MT
+# -----------------
+axes[1].stackplot(
+    time_index,
+    logicMT_df['HE_WW Serving Demand'],
+    logicMT_df['HP_AW Serving Demand'],
+    logicMT_df['Storage Discharge'],
+    labels=['HE_WW', 'HP_AW', 'Storage Discharge']
+)
+
+axes[1].set_title('MT Supply')
+axes[1].set_ylabel('Energy (kWh)')
+axes[1].legend(loc='upper right')
+axes[1].grid(True, alpha=0.3)
+
+# -----------------
+# HT
+# -----------------
+axes[2].stackplot(
+    time_index,
+    logicHT_df['CS_hybrid Serving Demand'],
+    logicHT_df['Import Serving Demand'],
+    logicHT_df['HP_WW Supply'],
+    logicHT_df['Plotted Storage Discharge'],
+    labels=['CS_hybrid', 'Import', 'HP_WW', 'Storage Discharge'],
+)
+
+axes[2].set_title('HT Supply')
+axes[2].set_ylabel('Energy (kWh)')
+axes[2].legend(loc='upper right')
+axes[2].grid(True, alpha=0.3)
+
+# X-axis formatting (only bottom subplot shows labels)
+axes[2].set_xticks(month_positions)
+axes[2].set_xticklabels(month_labels)
+axes[2].set_xlabel('Month')
+
+plt.tight_layout()
+plt.savefig(os.path.join(output_folder, 'demand_plot_combined.png'), dpi=300)
+plt.show()
+
+print("Combined plot saved to:", os.path.join(output_folder, 'demand_plot_combined.png'))
+
+
+
+=======
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+# ======================================================
+# COMBINED LT / MT / HT SUPPLY vs DEMAND TILED PLOT
+# ======================================================
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import os
+import numpy as np
+
+# Ensure proper hourly datetime index
+time_index = pd.date_range(start='2023-01-01', periods=8760, freq='h')
+
+month_positions = pd.date_range(start='2023-01-01', periods=12, freq='MS')
+month_labels = ['Jan','Feb','Mar','Apr','May','Jun',
+                'Jul','Aug','Sep','Oct','Nov','Dec']
+
+# ------------------------------------------------------
+# Calculate consistent y-axis limit across all levels
+# ------------------------------------------------------
+
+LT_total = logicLT_df[['HE_AW Serving Demand',
+                       'Chiller Serving Demand',
+                       'Storage Discharge']].sum(axis=1)
+MT_total = logicMT_df[['HE_WW Serving Demand',
+                       'HP_AW Serving Demand',
+                       'Storage Discharge']].sum(axis=1)
+HT_total = logicHT_df[['CS_hybrid Serving Demand',
+                       'Import Serving Demand',
+<<<<<<< HEAD
+                       'HP_WW Supply',
+                       'Plotted Storage Discharge']].sum(axis=1)
+=======
+                       'Storage Discharge']].sum(axis=1)
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+
+max_val = max(LT_total.max(), MT_total.max(), HT_total.max())
+
+# Add small headroom
+max_val = max_val * 1.05
+
+
+# ------------------------------------------------------
+# Create subplots
+# ------------------------------------------------------
+
+fig, axes = plt.subplots(3, 1, figsize=(18, 12), sharex=True)
+
+# ======================================================
+# LT
+# ======================================================
+
+axes[0].stackplot(
+    time_index,
+    logicLT_df['HE_AW Serving Demand'],
+    logicLT_df['Chiller Serving Demand'],
+    logicLT_df['Storage Discharge'],
+<<<<<<< HEAD
+    labels=['HE_AW', 'Chiller', 'Storage Discharge'],
+=======
+    labels=['HE_AW', 'Chiller', 'Storage'],
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+    colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+)
+
+# # Demand line
+# axes[0].plot(
+#     time_index,
+#     valuesLT_df['Demand'],
+#     color='black',
+#     linewidth=1.2,
+#     label='Demand'
+# )
+
+<<<<<<< HEAD
+# axes[0].set_title('Low Temperature (LT) Supply vs Demand')
+axes[0].set_ylabel('Energy (kWh)', fontsize=12)
+axes[0].set_ylim(0, max_val)
+axes[0].legend(loc='upper right', fontsize=10)
+=======
+axes[0].set_title('Low Temperature (LT) Supply vs Demand')
+axes[0].set_ylabel('Energy')
+axes[0].set_ylim(0, max_val)
+axes[0].legend(loc='upper right')
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+axes[0].grid(True, alpha=0.3)
+
+# ======================================================
+# MT
+# ======================================================
+
+axes[1].stackplot(
+    time_index,
+    logicMT_df['HE_WW Serving Demand'],
+    logicMT_df['HP_AW Serving Demand'],
+    logicMT_df['Storage Discharge'],
+<<<<<<< HEAD
+    labels=['HE_WW', 'HP_AW', 'Storage Discharge'],
+=======
+    labels=['HE_WW', 'HP_AW', 'Storage'],
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+    colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+)
+
+# axes[1].plot(
+#     time_index,
+#     valuesMT_df['Demand'],
+#     color='black',
+#     linewidth=1.2,
+#     label='Demand'
+# )
+
+<<<<<<< HEAD
+# axes[1].set_title('Medium Temperature (MT) Supply vs Demand')
+axes[1].set_ylabel('Energy (kWh)', fontsize=12)
+axes[1].set_ylim(0, max_val)
+axes[1].legend(loc='upper right', fontsize=10)
+=======
+axes[1].set_title('Medium Temperature (MT) Supply vs Demand')
+axes[1].set_ylabel('Energy')
+axes[1].set_ylim(0, max_val)
+axes[1].legend(loc='upper right')
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+axes[1].grid(True, alpha=0.3)
+
+# ======================================================
+# HT
+# ======================================================
+
+axes[2].stackplot(
+    time_index,
+    logicHT_df['CS_hybrid Serving Demand'],
+    logicHT_df['Import Serving Demand'],
+<<<<<<< HEAD
+    logicHT_df['HP_WW Supply'],
+    logicHT_df['Plotted Storage Discharge'],
+    labels=['CS_hybrid', 'Import', 'HP_WW', 'Storage Discharge'],
+    colors=['#1f77b4', '#ff7f0e', '#d62728', '#2ca02c']
+=======
+    logicHT_df['Storage Discharge'],
+    labels=['CS_hybrid', 'Import', 'Storage'],
+    colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+)
+
+# axes[2].plot(
+#     time_index,
+#     valuesHT_df['Demand'],
+#     color='black',
+#     linewidth=1.2,
+#     label='Demand'
+# )
+
+<<<<<<< HEAD
+# axes[2].set_title('High Temperature (HT) Supply vs Demand')
+axes[2].set_ylabel('Energy (kWh)', fontsize=12)
+axes[2].set_ylim(0, max_val)
+axes[2].legend(loc='upper right', fontsize=10)
+=======
+axes[2].set_title('High Temperature (HT) Supply vs Demand')
+axes[2].set_ylabel('Energy')
+axes[2].set_ylim(0, max_val)
+axes[2].legend(loc='upper right')
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+axes[2].grid(True, alpha=0.3)
+
+# ======================================================
+# X-axis formatting
+# ======================================================
+
+axes[2].set_xticks(month_positions)
+axes[2].set_xticklabels(month_labels)
+<<<<<<< HEAD
+axes[2].set_xlabel('Month', fontsize=12)
+=======
+axes[2].set_xlabel('Month')
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+
+plt.tight_layout()
+
+combined_plot_path = os.path.join(output_folder, 'demand_plot_combined_LT_MT_HT.png')
+plt.savefig(combined_plot_path, dpi=300)
+plt.show()
+
+print("Combined plot saved to:", combined_plot_path)
+
+
+<<<<<<< HEAD
+
+=======
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+# ======================================================
+# FUNCTION: Daily LT-MT-HT Combined Plot with Dates
+# ======================================================
+
+<<<<<<< HEAD
+output_folder_daily = os.path.join("examples", case_folder, "plots and print", "plots", "daily plots")
+
+=======
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+def plot_combined_daily(day):
+
+    # ---------------------------
+    # Define hourly slice
+    # ---------------------------
+    start_hour = (day - 1) * 24
+    end_hour = day * 24
+
+    time_index_full = pd.date_range(start='2023-01-01', periods=8760, freq='h')
+    time_index_day = time_index_full[start_hour:end_hour]
+
+    # ---------------------------
+    # Get actual calendar date for title and filename
+    # ---------------------------
+<<<<<<< HEAD
+    date_string = time_index_day[0].strftime('%d %B')        # e.g., "01 January"
+    file_date_string = time_index_day[0].strftime('%m-%d')   # e.g., "01-01"
+=======
+    date_string = time_index_day[0].strftime('%d %B %Y')        # e.g., "01 January 2023"
+    file_date_string = time_index_day[0].strftime('%Y-%m-%d')   # e.g., "2023-01-01"
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+
+    # ---------------------------
+    # Slice LT
+    # ---------------------------
+    LT_HE_AW = logicLT_df['HE_AW Serving Demand'].iloc[start_hour:end_hour]
+    LT_Chiller = logicLT_df['Chiller Serving Demand'].iloc[start_hour:end_hour]
+    LT_Storage = logicLT_df['Storage Discharge'].iloc[start_hour:end_hour]
+    LT_Demand = valuesLT_df['Demand'].iloc[start_hour:end_hour]
+
+    # ---------------------------
+    # Slice MT
+    # ---------------------------
+    MT_HE_WW = logicMT_df['HE_WW Serving Demand'].iloc[start_hour:end_hour]
+    MT_HP_AW = logicMT_df['HP_AW Serving Demand'].iloc[start_hour:end_hour]
+    MT_Storage = logicMT_df['Storage Discharge'].iloc[start_hour:end_hour]
+    MT_Demand = valuesMT_df['Demand'].iloc[start_hour:end_hour]
+
+    # ---------------------------
+    # Slice HT
+    # ---------------------------
+    HT_CS = logicHT_df['CS_hybrid Serving Demand'].iloc[start_hour:end_hour]
+    HT_Import = logicHT_df['Import Serving Demand'].iloc[start_hour:end_hour]
+<<<<<<< HEAD
+    HT_HP_WW = logicHT_df['HP_WW Supply'].iloc[start_hour:end_hour]
+    HT_Storage = logicHT_df['Plotted Storage Discharge'].iloc[start_hour:end_hour]
+=======
+    HT_Storage = logicHT_df['Storage Discharge'].iloc[start_hour:end_hour]
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+    HT_Demand = valuesHT_df['Demand'].iloc[start_hour:end_hour]
+
+    # ---------------------------
+    # Determine common y-limit
+    # ---------------------------
+    LT_total = LT_HE_AW + LT_Chiller + LT_Storage
+    MT_total = MT_HE_WW + MT_HP_AW + MT_Storage
+<<<<<<< HEAD
+    HT_total = HT_CS + HT_Import + HT_Storage + HT_HP_WW
+=======
+    HT_total = HT_CS + HT_Import + HT_Storage
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+
+    max_val = max(LT_total.max(), MT_total.max(), HT_total.max()) * 1.05
+
+    # ---------------------------
+    # Create figure
+    # ---------------------------
+    fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+
+    # ======================================================
+    # LT
+    # ======================================================
+    axes[0].stackplot(
+        time_index_day,
+        LT_HE_AW,
+        LT_Chiller,
+        LT_Storage,
+<<<<<<< HEAD
+        labels=['HE_AW', 'Chiller', 'Storage Discharge'],
+        colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+    )
+    axes[0].plot(time_index_day, LT_Demand, color='black', linewidth=1.2, label='Demand')
+    # axes[0].set_title(f'{date_string}')
+    axes[0].set_ylabel('Energy (kWh)', fontsize=12)
+    axes[0].set_ylim(0, max_val)
+    axes[0].legend(loc='upper right', fontsize=10)
+=======
+        labels=['HE_AW', 'Chiller', 'Storage'],
+        colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+    )
+    axes[0].plot(time_index_day, LT_Demand, color='black', linewidth=1.2, label='Demand')
+    axes[0].set_title(f'Low Temperature (LT) – {date_string}')
+    axes[0].set_ylabel('Energy')
+    axes[0].set_ylim(0, max_val)
+    axes[0].legend(loc='upper right')
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+    axes[0].grid(True, alpha=0.3)
+
+    # ======================================================
+    # MT
+    # ======================================================
+    axes[1].stackplot(
+        time_index_day,
+        MT_HE_WW,
+        MT_HP_AW,
+        MT_Storage,
+<<<<<<< HEAD
+        labels=['HE_WW', 'HP_AW', 'Storage Discharge'],
+        colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+    )
+    axes[1].plot(time_index_day, MT_Demand, color='black', linewidth=1.2, label='Demand')
+    # axes[1].set_title(f'Medium Temperature (MT) – {date_string}')
+    axes[1].set_ylabel('Energy (kWh)', fontsize=12)
+    axes[1].set_ylim(0, max_val)
+    axes[1].legend(loc='upper right', fontsize=10)
+=======
+        labels=['HE_WW', 'HP_AW', 'Storage'],
+        colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+    )
+    axes[1].plot(time_index_day, MT_Demand, color='black', linewidth=1.2, label='Demand')
+    axes[1].set_title(f'Medium Temperature (MT) – {date_string}')
+    axes[1].set_ylabel('Energy')
+    axes[1].set_ylim(0, max_val)
+    axes[1].legend(loc='upper right')
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+    axes[1].grid(True, alpha=0.3)
+
+    # ======================================================
+    # HT
+    # ======================================================
+    axes[2].stackplot(
+        time_index_day,
+        HT_CS,
+        HT_Import,
+<<<<<<< HEAD
+        HT_HP_WW,
+        HT_Storage,
+        labels=['CS_hybrid', 'Import', 'HP_WW', 'Storage Discharge'],
+        colors=['#1f77b4', '#ff7f0e', '#d62728', '#2ca02c']
+    )
+    axes[2].plot(time_index_day, HT_Demand, color='black', linewidth=1.2, label='Demand')
+    # axes[2].set_title(f'High Temperature (HT) – {date_string}')
+    axes[2].set_ylabel('Energy (kWh)', fontsize=12)
+    axes[2].set_xlabel('Hour of Day', fontsize=12)
+    axes[2].set_ylim(0, max_val)
+    axes[2].legend(loc='upper right', fontsize=10)
+=======
+        HT_Storage,
+        labels=['CS_hybrid', 'Import', 'Storage'],
+        colors=['#1f77b4', '#ff7f0e', '#2ca02c']
+    )
+    axes[2].plot(time_index_day, HT_Demand, color='black', linewidth=1.2, label='Demand')
+    axes[2].set_title(f'High Temperature (HT) – {date_string}')
+    axes[2].set_ylabel('Energy')
+    axes[2].set_xlabel('Hour of Day')
+    axes[2].set_ylim(0, max_val)
+    axes[2].legend(loc='upper right')
+>>>>>>> 25b2a8c43ef4fd80c36705f3f6294585d1257fbf
+    axes[2].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    daily_plot_path = os.path.join(output_folder_daily, f'combined_LT_MT_HT_{file_date_string}.png')
+    plt.savefig(daily_plot_path, dpi=300)
+    plt.close()
+
+    print(f"Combined LT-MT-HT plot for {date_string} saved to:", daily_plot_path)
+
+
+# ======================================================
+# SELECT DAYS TO PLOT
+# ======================================================
+
+days_to_plot = [1, 50, 120, 200, 300]
+
+for day in days_to_plot:
+    plot_combined_daily(day)

@@ -1,0 +1,13 @@
+system_params:
+  trl_threshold:
+  interest_rate_def: 0.1
+  num_times_horizon: 8760
+  currency_unit: CHF
+  mass_unit: kg
+  length_unit: m
+
+stages:
+- stage_id: S1
+  start_year: 2025
+  co2_min:
+  co2_max:

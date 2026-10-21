@@ -1,0 +1,19 @@
+ecs:
+- ec_id: Solar
+  unit: kWh
+- ec_id: El
+  unit: kWh
+- ec_id: IT
+  unit: kWh
+- ec_id: WH
+  unit: kWh
+- ec_id: MT
+  unit: kWh
+- ec_id: HT
+  unit: kWh
+- ec_id: Air
+  unit: kWh
+- ec_id: LT
+  unit: kWh
+- ec_id: AirOut
+  unit: kWh
