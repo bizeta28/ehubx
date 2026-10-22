@@ -43,3 +43,8 @@ docs/source/ehubx*
 
 # PyPI
 dist
+# Semester project: local-only context (papers, internal notes). Never commit.
+docs/semester_project/private/
+# Generated post-processing outputs and OS files
+**/csv_files/
+.DS_Store
