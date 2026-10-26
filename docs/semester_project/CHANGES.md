@@ -1,5 +1,46 @@
 # Implementation-side change log
 
+## 2026-10-26 · no spec (Step 0, analysis only) · ERF scripts, Air→LT, TES dumping, HP capacity basis
+- **Changed:** nothing in code, inputs or case scripts. All analysis ran on the 22 Oct `results/` of
+  both reference cases, from scratch copies of the scripts with only the output folder redirected
+  (`4_full` scripts also repointed from `results_flex/10_flex` to `results/`).
+- **ERF: the gap is explained.** `5_ERF copy.py` gives real ERF **55.99 %** (1_WH) and 49.68 % (4_full).
+  `5_ERF.py` gives 47.49 % / 47.24 %. Both are reproduced exactly by one re-implementation; each
+  difference is switched on in turn below (1_WH; MT/HT = DC-attributed useful heat, MWh/a; El DC+CS = 115.83 MWh/a):
+
+  | Step | Change vs. the row above | 1_WH ERF | MT / HT | 4_full ERF |
+  |---|---|---|---|---|
+  | A | `5_ERF.py` | 47.49 % | 40.15 / 14.86 | 47.24 % |
+  | B | α_HT = 0 where HT_total < 0 (`5_ERF.py` divides by negative totals in 1,417 h) | 38.93 % | 40.15 / 4.94 | 47.24 % |
+  | C | HE_LT dropped: the copy reads `V_ConvTechOut`/MT of HE_LT, which is always 0 (HE_LT takes MT as an **input**, 12.29 MWh/a) | 49.54 % | 52.44 / 4.94 | 49.68 % |
+  | D | HP_WW weighted by the air share r instead of α_MT | 49.54 % | 52.44 / 4.94 | 49.68 % |
+  | E | hourly MT, HT clipped at ≥ 0 (= `5_ERF copy.py`) | **55.99 %** | 52.44 / 12.41 | 49.68 % |
+
+  So the 56 % comes from a script that (i) never subtracts the MT that HE_LT takes (+10.6 pp, a bug)
+  and (ii) clips negative hourly HT, which hides most of the −11.25 MWh/a TESHT net loss (+6.5 pp).
+  Neither script gives a clean definition. Input for the KPI spec (`formulation/kpis.md`).
+- **Air → LT (HE_AW) is active and large.** 1_WH / 4_full:
+  - HE_AW supplies 90.20 / 79.99 MWh/a of LT, i.e. 82.9 / 80.6 % of LT production. The Chiller supplies 18.66 / 19.20 MWh/a.
+  - HE_AW sits at its 25 kW cap. It outputs LT in 8,289 / 8,254 h, and in 3,410 / 2,731 h it outputs more than the LT demand.
+  - The Chiller is off in 6,495 / 6,497 h with LT demand > 0.
+  - LT peak demand is 64 kW, the Chiller is 32 / 31 kW. In 841 / 858 h, Cap_chiller + TES_LT discharge < D_LT, so
+    LT demand is only met because of HE_AW (max shortfall 25 kW = the HE_AW cap).
+- **TES used as a heat sink.** Hours with inflow and outflow both > 0 in the same hour:
+  - 1_WH TESHT (45.23 kWh): 1,980 h, 79.01 MWh/a moved simultaneously, 11.25 MWh/a net loss.
+  - TESLT: 764 h / 9.30 MWh (1_WH), 535 h / 8.87 MWh (4_full).
+  - BES (4_full): 8 h / 0.47 MWh.
+- **HP capacity basis (needed for Step 1).** `conversion` techs cap the **main output** carrier
+  (`conv_tech_model.py:479-493`). Without `main_out_ec`, the single output is the main one
+  (`conv_tech_data.py:417`). So the HP_AW, HP_WW, Chiller and HE_AW capacities and `capex_per_cap` are per kW of
+  heat output (kW_th), as for `type: heatpump` (`pow_cond ≤ Cap`). Confirmed in results: max output =
+  capacity (HP_AW 44.85 kW_th vs max El 16.26 kW). The switch in Step 1 does not change the cost basis.
+- **Repo state:** branch was already level with `origin/semester-project` at session start (Step 0a commits pushed).
+- **Open issues:**
+  1. ERF definition: which one is the reference, and is the paper's value kept as reported or recomputed
+     (design side, `kpis.md`).
+  2. Step 0 model/input fixes (`ls1` profile, simultaneous El import/export, ε shifting cost, BES C-rate)
+     and Steps 1–4 still have no spec in `formulation/`. Nothing implemented.
+
 ## 2026-10-22 · no spec (Step 0a: repo hygiene + reference runs) · untrack generated files, rerun both cases
 - **Changed:** untracked 39 generated CSVs in `examples/4_WH+PV+DHN+Flex/plots and print/csv_files/`
   and 7 `.DS_Store` files (`git rm --cached`; files stay on disk, both patterns were already in
