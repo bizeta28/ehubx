@@ -1,5 +1,46 @@
 # Implementation-side change log
 
+## 2026-10-26 · `formulation/kpis.md` (sections 2–3) · KPI script erf_kpi.py
+- **Changed:** added the spec `formulation/kpis.md` (as provided) and
+  `examples/4_WH+PV+DHN+Flex/plots and print/erf_kpi.py`. It is one script for the whole 1_WH family:
+  the case folder is an argument, and it writes nothing to disk. It computes ERF, DoC and DoC_E, skips REF,
+  and prints the term breakdown (check 4) and PASS/FAIL for checks 1, 2, 3 and 5. No model code, inputs or
+  existing scripts were touched (`5_ERF.py` and `5_ERF copy.py` are unchanged).
+- **Data source:** flows come from the dense `tech-TS.csv`, `import_export-TS.csv` and `loads-TS.csv`
+  (zeros included), so a missing variable can be told apart from an all-zero one. `opt_vars.csv` is sparse
+  and is used only as a cross-check (equal annual sums). Every flow name in spec section 1 exists
+  under that name in both cases. I_HT and X_HT are absent in 1_WH and set to 0, as the spec says.
+- **Storage index:** ehubX `V_StorTechEnergy[t]` is the level at the *start* of hour t. The spec's E(t) is
+  read as the level at the *end* of hour t: E(0) = `V_StorTechEnergy[1]`, E(T) = `V_StorTechEnergyFinal`
+  (`tech.csv`). With this reading, L_TES ≥ 0 in every hour of both cases.
+- **Ran** on the 22 Oct reference runs (MWh/a):
+
+  | | 1_WH | 4_full |
+  |---|---|---|
+  | Q_CS_HT | 69.50 | 69.50 |
+  | − L_TES | −11.25 | 0.00 |
+  | − R_MT | −12.29 | −2.83 |
+  | − φ_HT·X_HT (X_HT / I_HT) | 0.00 (– / –) | −21.32 (21.32 / 10.11) |
+  | = Q_DC→HT | 45.96 | 45.35 |
+  | + φ_Air·A_HP (A_HP) | 11.12 (23.45) | 11.10 (20.65) |
+  | = Q_reuse | 57.08 | 56.45 |
+  | P_DC / P_CS / P_HPAW / P_HPWW / P_Ch | 77.22 / 38.61 / 23.45 / 0.05 / 5.61 | 77.22 / 38.61 / 20.65 / 0.00 / 5.73 |
+  | = P_el,total | 144.95 | 142.21 |
+  | **ERF** | **39.38 %** | **39.70 %** |
+  | **DoC** (hourly) | **52.32 %** | **61.19 %** |
+  | **DoC_E** | **40.46 %** | **43.53 %** |
+
+  Checks: 1 PASS (57.08 / 56.45 ≤ 106.57), 2 PASS (≤ 128.92), 3 PASS (E(0) = E(T) = 0 kWh) in both.
+  Check 5 PASS in 4_full (0 h), N/A in 1_WH. The cross-check against `opt_vars.csv` passes. A copy of the 1_WH results
+  with HE_LT renamed stops with `R_MT: V_ConvTechIn (carrier MT, tech HE_LT) not found`.
+- **Open issues (design side):**
+  1. DoC: 721 h/a have D_HT + D_MT = 0. The spec says "1/|T|" (|T| = 8760, section 0) and "hours with D = 0
+     excluded". Implemented literally: excluded from the sum, divided by 8760. Dividing by the 8,039 h with
+     demand instead gives 57.01 % (1_WH) and 66.68 % (4_full). Which one is meant?
+  2. Q_reuse(t) < 0 in 613 h (1_WH) and 34 h (4_full). This is allowed by the spec (no clipping in ERF, DoC clips at 0),
+     reported for information.
+  3. Spec section 6 asks for a separate short test on 1_WH; the built-in checks cover it for now.
+
 ## 2026-10-26 · no spec (Step 0, analysis only) · ERF scripts, Air→LT, TES dumping, HP capacity basis
 - **Changed:** nothing in code, inputs or case scripts. All analysis ran on the 22 Oct `results/` of
   both reference cases, from scratch copies of the scripts with only the output folder redirected
