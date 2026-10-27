@@ -1,5 +1,91 @@
 # Implementation-side change log
 
+## 2026-10-27 · `formulation/01_heatpump_balance.md` + `03_air_lt_direction.md` · Steps 1, 3 and 1+3
+- **Changed:** both specs committed with status "approved by Bea, 26 Oct 2026". Six new case folders,
+  copied from the references (`inputs/` + `main_small_demo.py` only). `1_WH` and `4_WH+PV+DHN+Flex` are untouched:
+  `1_WH_fix1`, `1_WH_fix3`, `1_WH_fix1+3`, `4_WH+PV+DHN+Flex_fix1`, `…_fix3`, `…_fix1+3`.
+  - Step 1 (`techs.yaml`): HP_AW and HP_WW become `type: heatpump` with `heatpump_params.ecs`
+    (`elec: El`, `heat_in: Air` / `MT`, `heat_out: MT` / `HT`, `cool_in` = `cool_out` = `HPdummy`).
+    `ecs.yaml`: new carrier `HPdummy`, which has no demand, import or export. `hubs.yaml`: `profile_path: profiles/HPCOPprofile.csv`
+    for both. Costs unchanged.
+  - Step 3 (`techs.yaml`): HE_AW `in_ecs: [Air 1 kWh, LT 1 kWh]`, `main_in_ec: Air`, `out_ecs: [AirOut 1 kWh/kWh]`.
+  - `erf_kpi.py`: A_HP, P_HPAW and P_HPWW are read as `V_ConvTechIn` *or* `V_HpTechIn`, and the script prints which one it used.
+    Output on both references is unchanged (re-run, identical to the 26 Oct entry).
+  - New `plots and print/fix_checks.py` (read-only): spec section 5 checks of both specs plus TAC and capacities.
+- **Pre-checks (spec 01 §3):**
+  1. Parser keys are as listed in the spec. `ecs` (`elec`, `heat_in`, `heat_out`, `cool_in`, `cool_out`) and `cop_factor` go
+     in `techs.yaml`. `cop`, `availability`, `profile_path`, `temp_heat_in/out` go in `hubs.yaml`.
+  2. The cap constraint (`hp_tech_model.py:327-332`) is `V_HpTechOut[heat_out] + V_HpTechIn[cool_in] ≤ a·Cap`, so it counts
+     the cooling condenser term. With one dummy carrier, the equality balance gives Σ El_cool = 0, and
+     `C_HpTechCopCo` then forces every cooling flow to 0.
+  3. Cost basis: see the HP_AW capacity check below.
+- **Deviation from spec 01 wording, data format only:** the spec says the heat pumps "keep `profiles/HPCOPprofile.csv`".
+  The heatpump parser needs the header rows `stage_id / hub_id / tech_id / profile_key` (+ `unit`). The
+  conversion file has `stage_id / tech_id / ec_id`. In the fix1 folders the file keeps its name and its 8760 values
+  (verified identical) with the header rewritten. HP_WW's `cop: 4.5` in `hubs.yaml` is still there but is overridden in
+  all 8760 h (`TimeSeries.get_value` prefers hourly values). Check S1.1 confirms Q^c = COP_profile(t)·P to 1e-14 kW.
+- **HP_AW capacity check (reference results, before any change):**
+
+  | | 1_WH | 4_full |
+  |---|---|---|
+  | Cap HP_AW [kW] | 44.854 | 26.335 |
+  | max_t Q^c [kW_th] (hour, COP there) | 44.854 (t = 126, COP 3.02) | 26.335 (t = 31, COP 3.08) |
+  | hours with Q^c = Cap | 66 | 1,240 |
+  | max_t El [kW] | 16.26 | 10.03 |
+  | annualised CAPEX / Cap [CHF/(kW_th·a)] | 160.92 | 160.92 |
+
+  160.92 = 1370 CHF/kW × annuity(10 %, 20 a). The cap binds on heat output, never on El, so the basis is kW_th, the same as
+  `pow_cond ≤ Cap` under `type: heatpump`. HP_WW (1_WH): 0.446 kW = max Q^c, also 160.92 CHF/(kW_th·a).
+  *Reference temperature:* the model has no rating point. Cap is the same kW_th limit in every hour, whatever the COP,
+  and the max output falls in cold hours (COP ≈ 3.0). The profile (min 2.63, mean 4.45, max 6.00) has no temperatures in the
+  repo, so I cannot tell which source/sink temperatures it assumes.
+- **Ran:** all six cases, Gurobi 11, gap 0 %. Solve time 14–21 min, except the two fix1 runs. These show 18.3 h of
+  wall time, but their root LP took only 192–212 work units (the other runs took 194 work units in 155 s). Both stalled over the same night,
+  so the machine slowed down, not the model.
+
+  | | TAC [CHF/a] | Chiller [kW] | HP_AW [kW_th] | HP_WW | HE_AW | TES HT / MT / LT [kWh] | DoC | DoC_E | ERF |
+  |---|---|---|---|---|---|---|---|---|---|
+  | **1_WH** ref | 89,952.88 | 32.00 | 44.85 | 0.45 | 25.00 | 45.23 / 0 / 14.42 | 52.32 % | 40.46 % | 39.38 % |
+  | + step 1 | 89,962.13 | 32.14 | 45.01 | 0.44 | 25.00 | 45.28 / 0 / 13.54 | 54.20 % | 42.97 % | 42.10 % |
+  | + step 3 | 99,694.94 | 64.47 | 41.24 | 0.53 | 8.97 | 16.16 / 53.21 / 0 | 62.01 % | 44.41 % | 44.33 % |
+  | + steps 1+3 | 99,039.20 | 57.36 | 41.43 | 0.47 | 8.69 | 20.00 / 49.49 / 12.83 | 64.55 % | 47.01 % | 49.09 % |
+  | **4_full** ref | 79,754.74 | 31.00 | 26.33 | 0 | 25.00 | 0 / 0 / 20.97 | 61.19 % | 43.53 % | 39.70 % |
+  | + step 1 | 79,729.44 | 31.35 | 26.33 | 0 | 25.00 | 0 / 0 / 18.66 | 63.74 % | 46.63 % | 42.44 % |
+  | + step 3 | 89,080.55 | 59.57 | 26.33 | 0 | 9.03 | 0 / 0 / 36.39 | 63.09 % | 46.15 % | 36.34 % |
+  | + steps 1+3 | 88,646.61 | 57.00 | 25.87 | 0 | 5.93 | 0 / 27.17 / 14.42 | 63.40 % | 47.64 % | 40.66 % |
+
+  HE_AW capacity is in kW of LT output for ref/step 1, and kW of air (= AirOut) for steps 3 and 1+3.
+- **Checks spec 01 §5 (fix1 and fix1+3, both cases): all PASS.**
+  1. max|Q^e + P − Q^c| ≤ 7.1e-15 kW (HP_AW), ≤ 5.6e-17 kW (HP_WW).
+  2. max Q^c = Cap to 1e-4 kW (HP_AW 45.009 / 26.335 / 41.429 / 25.874 kW).
+  3. `V_HpTechElecCo` and both `HPdummy` flows are exactly 0 in all hours.
+  Air drawn by HP_AW: 23.45 → 61.31 MWh/a (1_WH) and 20.65 → 54.96 MWh/a (4_full), each equal to Σ(COP−1)·P.
+  HP El and heat output barely move: 1_WH Q^c 84.91 → 84.71 MWh/a.
+- **Checks spec 03 §5 (fix3 and fix1+3, both cases): all PASS.**
+  1. The Chiller is the only LT producer, and HE_AW has no LT output column. LT balance residual ≤ 5.3e-8 kW.
+  2. max|Q_HE_AW,LT − Q_AW| = 0 kW.
+  3. Chiller Cap vs peak of (D_LT + TESLT charge − discharge): 64.47 ≥ 64.00 (1_WH fix3), 57.36 ≥ 57.36 (1_WH 1+3),
+     59.57 ≥ 59.01 (4_full fix3), 57.00 ≥ 57.00 (4_full 1+3). With HE_AW and HE_LT loads included, the net peak equals
+     Cap in all four (the chiller covers the whole LT load).
+  4. HE_AW LT, now a load (was 90.20 / 79.99 MWh/a as a producer): 23.97 / 16.83 MWh/a (1_WH fix3 / 1+3) and
+     23.33 / 14.72 MWh/a (4_full). Chiller LT: 18.66 → 120.29 / 114.19 MWh/a (1_WH), 19.20 → 120.14 / 109.98 MWh/a (4_full).
+     Chiller El: 5.61 → 28.87 / 27.38 (1_WH), 5.73 → 28.09 / 26.50 MWh/a (4_full).
+  5. The three cases per reference are run and the KPI rows are filled (table above). `erf_kpi.py` checks 1, 2, 3 and 5 PASS in all six.
+  - Feasibility: peak Q^CS_Air = 9.60 kW against an installed HE_AW of 5.9–9.0 kW. All runs are feasible: HP_AW absorbs the rest,
+    since Air has no other sink. HE_AW cost basis: 145 CHF/kW was per kW of LT (= 0.9 kW of air) and is now per kW of air, so
+    it is ~10 % cheaper per kW of air handled. HE_AW annualised cost is ≈ 18 CHF/(kW·a) × 6–9 kW, so the shift is ≈ 15 CHF/a.
+- **Open issues (design side):**
+  1. `kpis.md` §1: the variable for A_HP, P_HPAW and P_HPWW is `V_HpTechIn` once Step 1 is in (the table says `V_ConvTechIn`).
+     The script handles both; the spec table needs the update.
+  2. With Step 3, DC air that HP_AW does not use costs chiller El to reject (HE_AW + chiller). This makes HP_AW the
+     cheaper air sink even when MT is not needed. Same question as the open point in spec 03 §6 (free Air → AirOut
+     sensitivity, possible double count of cooling El).
+  3. 1_WH + step 3 builds a 53 kWh TESMT (0 before) and cuts HE_LT dumping (R_MT 12.29 → 2.00 MWh/a). This is the main reason
+     its ERF rises, although the chiller El rises too.
+  4. HP_WW's `cop: 4.5` in `hubs.yaml` is overridden by the profile. Delete the line or keep it, whichever the design side prefers.
+     The HPCOPprofile temperatures are unknown (see above).
+  5. Nothing pushed. Branch is 9 commits ahead of `origin/semester-project` (incl. `41401ba`, `c5cf8d9` of 26 Oct).
+
 ## 2026-10-26 · `formulation/kpis.md` (sections 2–3) · KPI script erf_kpi.py
 - **Changed:** added the spec `formulation/kpis.md` (as provided) and
   `examples/4_WH+PV+DHN+Flex/plots and print/erf_kpi.py`. It is one script for the whole 1_WH family:
