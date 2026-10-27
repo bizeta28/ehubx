@@ -1,0 +1,72 @@
+tech_lists:
+- tech_list_id: TL1
+  #Technologies available for waste heat utilisation (V.2)
+  techs: [DC, CS_hybrid, Chiller, HP_AW, HP_WW, HE_WW, HE_AW, HE_LT, TESMT, TESLT, TESHT]
+
+hubs:
+- hub_id: H1
+  allowed_tech_lists: TL1
+  techs:
+
+  - tech_id: PV
+    tech_params:
+      cap_max: 400 m^2 #not sure it works for PV, I see that the cap max is also fixed in the csv files
+
+  - tech_id: BES
+    tech_params:
+      cap_max: 100 kWh
+
+  - tech_id: DC
+    tech_params:
+      cap_max: 20 kW
+
+  - tech_id: HE_LT # Water to water HE from medium to low temperature heat, used to dissipate heat with the chiller.
+
+  - tech_id: CS_hybrid
+    tech_params:
+      cap_max: 25 kW
+
+  - tech_id: HE_WW
+    tech_params:
+      cap_max: 151 kW
+
+  - tech_id: HP_WW
+    tech_params:
+      cap_max: 100 kW
+    heatpump_params:
+      cop: 4.5 #revise
+      # Step 1: the hourly profile overrides cop: 4.5 above in all 8760 h (spec: HP_WW keeps HPCOPprofile.csv)
+      profile_path: profiles/HPCOPprofile.csv
+
+  - tech_id: HE_AW
+    tech_params:
+      cap_max: 25 kW
+
+  - tech_id: HP_AW
+    #heatpump_params:
+      #cop: 12.3 # TO BE REVISED, add deltaT - calculated from Carnot between 25 and 35 °C with efficiency 40%
+    heatpump_params: # Step 1: same COP profile as before
+      profile_path: profiles/HPCOPprofile.csv
+
+  - tech_id: Chiller
+    tech_params:
+      cap_max: 200 kW #to be on the safe side - the power is heat
+
+  - tech_id: TESMT
+    tech_params:
+      cap_max: 200 kWh
+    storage_params:
+      soc_init: 0
+
+  - tech_id: TESHT
+    tech_params:
+      cap_max: 200 kWh
+    storage_params:
+      soc_init: 0
+
+  - tech_id: TESLT
+    tech_params:
+      cap_max: 200 kWh
+    storage_params:
+      soc_init: 0
+
