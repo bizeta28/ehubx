@@ -1,0 +1,10 @@
+demand_profiles:
+- profiles/demands.csv
+
+load_shifting:
+- load_shift_id: ls3 #ls1=30%, ls2=20%, ls3=10%, ls4=5%
+  stages: S1
+  hubs: H1
+  ec: IT
+  interval_length: 24 h
+  profile_path: profiles/loadshifting_profiles.csv

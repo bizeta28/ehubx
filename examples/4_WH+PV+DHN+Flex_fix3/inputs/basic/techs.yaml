@@ -1,0 +1,319 @@
+techs:
+
+- tech_id: DC #Data center with a demand based on workload converting IT-load (electricity) to unusable waste heat
+  type: conversion
+  tech_params:
+    lifetime: 10 a
+    trl:
+    unit_cap_min: 20 kW
+  costs:
+    one_time_capex:
+    capex_per_cap: #8500 CHF/kW # 8244 CHF/kW
+    one_time_opex:
+    opex_per_cap: #165 CHF/kW
+    opex_per_energy:
+  emissions:
+    co2_per_cap: 3315 kg/kW
+  conversion_params:
+    in_ecs:
+    - in_id: El
+      in_part: 1 kWh
+    #main_in_ec: El
+    out_ecs:
+    - ec_id: WH
+      out_eff: 1 kWh/kWh
+    - ec_id: IT
+      out_eff: 1 kWh/kWh
+    main_out_ec: WH
+
+- tech_id: CS_hybrid #HC system - combination of air and liquid (DTC)
+  type: conversion
+  tech_params:
+    lifetime: 5 a
+    trl:
+    unit_cap_min:
+  costs:
+    one_time_capex:
+    capex_per_cap:
+    one_time_opex:
+    opex_per_cap:
+    opex_per_energy:
+  emissions:
+    co2_per_cap:
+  conversion_params:
+    in_ecs:
+    - in_id: El
+      in_part: 0.5 kWh # PUE-1
+    - in_id: WH
+      in_part: 1.0 kWh # Q_WH = P_IT
+    main_in_ec: WH
+    out_ecs:
+    - ec_id: Air
+      out_eff: 0.48 kWh/kWh # eta_AC * (P_tot - eta_LC * P_IT) = 0.8 (1.5 - 0.9*1)
+    - ec_id: HT
+      out_eff: 0.9 kWh/kWh # eff_LC * P_IT
+    main_out_ec: HT
+
+- tech_id: HE_AW #Heat Exchanger between the air leaving the DC air cooling system (around 25 °C) and the low-temperature network (around 10°C at NEST)
+  type: conversion
+  tech_params:
+    lifetime: 20 a
+    trl:
+  costs:
+    one_time_capex:
+    capex_per_cap: 145 CHF/kW
+    one_time_opex:
+    opex_per_cap: 1.1 CHF/kW
+    opex_per_energy:
+  emissions:
+    co2_per_cap: 12 kg/kW #from ChatGPT
+  # Step 3 (formulation/03_air_lt_direction.md): rejection tech, Air (1) + LT (1) -> AirOut (1).
+  # DC air heat is rejected into the chilled-water loop (an LT load), no longer an LT source.
+  # Capacity (and 145 CHF/kW) now refers to AirOut = Air, before to LT = 0.9 * Air.
+  conversion_params:
+    in_ecs:
+    - in_id: Air
+      in_part: 1 kWh
+    - in_id: LT
+      in_part: 1 kWh # 1:1: the coil absorbs exactly the air heat it removes
+    main_in_ec: Air
+    out_ecs:
+    - ec_id: AirOut
+      out_eff: 1 kWh/kWh
+
+- tech_id: HP_WW #Heat pump upgrading the air exiting the medium temperature network to high temperature suitable for domestic hot water (around 60 °C)
+  type: conversion
+  tech_params:
+    lifetime: 20 a
+    trl:
+  costs:
+    one_time_capex:
+    capex_per_cap: 1370 CHF/kW
+    one_time_opex: 430 CHF
+    opex_per_cap:
+    opex_per_energy:
+  emissions:
+    co2_per_cap: 30 kg/kW #from ChatGPT
+  conversion_params:
+    in_ecs:
+    - in_id: MT
+      in_part: 1 kWh
+    - in_id: El
+      in_part: 1 kWh
+    main_in_ec: El
+    out_ecs:
+    - ec_id: HT
+      out_eff: profiles/HPCOPprofile.csv
+    #main_out_ec: Mediumtemp
+
+- tech_id: HE_WW #Heat Exchanger between high temperature and medium temperature networks
+  type: conversion
+  tech_params:
+    lifetime: 20 a
+    trl:
+  costs:
+    one_time_capex:
+    capex_per_cap: 145 CHF/kW
+    one_time_opex:
+    opex_per_cap: 1.1 CHF/kW
+    opex_per_energy:
+  emissions:
+    co2_per_cap: 20 kg/kW #from ChatGPT
+  conversion_params:
+    in_ecs:
+    - in_id: HT
+      in_part: 1 kWh
+    #main_in_ec: Hightemp
+    out_ecs:
+    - ec_id: MT
+      out_eff: 0.95 kWh/kWh
+    #main_out_ec: Mediumtemp
+
+- tech_id: TESMT
+  type: storage
+  tech_params:
+    lifetime: 30 a #to be revised, but 12 a seemed low to me
+  costs:
+    one_time_capex:
+    capex_per_cap: 300 CHF/kWh
+    one_time_opex: 350 CHF
+    opex_per_cap:
+    opex_per_energy:
+  emissions:
+    co2_per_cap: 20 kg/kWh #to be revised
+  storage_params:
+    ec: MT
+    in_eff: 0.95 #0.95
+    out_eff: 0.95 #0.95
+    charge_max: 1 1/h #to be revised from NEST wiki
+    discharge_max: 1 1/h
+    soc_min: 0
+    soc_max: 1
+    standby_loss: 0.01 1/h
+
+- tech_id: TESHT
+  type: storage
+  tech_params:
+    lifetime: 30 a
+  costs:
+    one_time_capex:
+    capex_per_cap: 300 CHF/kWh # in my understanding this value might change from the MT storage as we need lower volume per kWh given the higher deltaT
+    one_time_opex: 350 CHF
+    opex_per_cap:
+    opex_per_energy:
+  emissions:
+    co2_per_cap: 10 kg/kWh # different from the case before as delta T is larger, so less volume needed per kWh
+  storage_params:
+    ec: HT
+    in_eff: 0.95 #0.95
+    out_eff: 0.95 #0.95
+    charge_max: 1 1/h
+    discharge_max: 1 1/h
+    soc_min: 0
+    soc_max: 1
+    standby_loss: 0.01 1/h
+
+- tech_id: TESLT # parameters to be revised
+  type: storage
+  tech_params:
+    lifetime: 30 a
+  costs:
+    one_time_capex:
+    capex_per_cap: 300 CHF/kWh # in my understanding this value might change from the MT storage as we need lower volume per kWh given the higher deltaT
+    one_time_opex: 350 CHF
+    opex_per_cap:
+    opex_per_energy:
+  emissions:
+    co2_per_cap: 10 kg/kWh # different from the case before as delta T is larger, so less volume needed per kWh
+  storage_params:
+    ec: LT
+    in_eff: 0.95 #0.95
+    out_eff: 0.95 #0.95
+    charge_max: 1 1/h
+    discharge_max: 1 1/h
+    soc_min: 0
+    soc_max: 1
+    standby_loss: 0.01 1/h
+
+- tech_id: BES
+  type: storage
+  tech_params:
+    lifetime: 12 a
+    trl:
+    unit_cap_min: #10 kWh
+  costs:
+    interest_rate:
+    one_time_capex:
+    capex_per_cap: 245 CHF/kWh #750 # revise this value it seems high
+    one_time_opex:
+    opex_per_cap: 7.1 CHF/kWh
+  emissions:
+    co2_per_cap: 157 kg/kWh # could be smaller maybe
+  storage_params:
+    ec: El
+    charge_max: #1 1/h #C-rate of 1
+    discharge_max: #1 1/h #C-rate
+    soc_min: 0.0 # 0.2
+    soc_max: 1.0 # 0.8
+    in_eff: 0.98 #0.98
+    out_eff: 0.97 #0.97
+    standby_loss: 0.0042 1/h #0.0042 1/h
+
+- tech_id: PV
+  type: solar
+  tech_params:
+    lifetime: 25 a
+    trl:
+    unit_cap_min: #100
+  costs:
+    interest_rate:
+    one_time_capex: 1075 CHF
+    capex_per_cap: 280 CHF/m^2 #280
+    one_time_opex:
+    opex_per_cap: 2.6 CHF/m^2
+  emissions:
+    co2_per_cap: 252 kg/m^2
+  conversion_params:
+    in_ecs:
+    - in_id: Solar
+      in_part: 1 kWh
+    out_ecs:
+    - ec_id: El
+      out_eff: 0.17 kWh/kWh
+  solar_params:
+    curtail_max_rel:
+
+- tech_id: HP_AW #Heat pump upgrading the air exiting the air cooling system of the DC to water at 35°C suitable for space heating
+  type: conversion
+  tech_params:
+    lifetime: 20 a
+    trl:
+  costs:
+    one_time_capex:
+    capex_per_cap: 1370 CHF/kW
+    one_time_opex: 430 CHF
+    opex_per_cap:
+    opex_per_energy:
+  emissions:
+    co2_per_cap: 30 kg/kW #from ChatGPT
+  conversion_params:
+    in_ecs:
+    - in_id: Air
+      in_part: 1 kWh
+    - in_id: El
+      in_part: 1 kWh
+    main_in_ec: El
+    out_ecs:
+    - ec_id: MT
+      out_eff: profiles/HPCOPprofile.csv
+    #main_out_ec: Mediumtemp
+
+- tech_id: Chiller #Parametrs to be revised
+  type: conversion
+  tech_params:
+    lifetime: 20 a
+    trl:
+    unit_cap_min:
+  costs:
+    interest_rate:
+    one_time_capex:
+    capex_per_cap: 1370 CHF/kW #to be revised
+    one_time_opex:
+    opex_per_cap: 2 CHF/kW
+  emissions:
+    co2_per_cap: 20 kg/kW
+  conversion_params:
+    in_ecs:
+    - in_id: El
+      in_part: 1 kWh
+    main_in_ec: El
+    out_ecs:
+    - ec_id: LT
+      out_eff: profiles/ChillerCOPprofile.csv
+      #out_eff: 1 kWh/kWh
+    #main_out_ec:
+
+- tech_id: HE_LT #This model represents the Water to water Heat Exchanger between medium temperature and low temperature networks
+  type: conversion
+  tech_params:
+    lifetime: 20 a
+    trl:
+  costs:
+    one_time_capex:
+    capex_per_cap: 145 CHF/kW
+    one_time_opex:
+    opex_per_cap: 1.1 CHF/kW
+    opex_per_energy:
+  emissions:
+    co2_per_cap: 20 kg/kW #from ChatGPT
+  conversion_params:
+    in_ecs:
+    - in_id: MT
+      in_part: 0.95 kWh
+    - in_id: LT
+      in_part: 1 kWh
+    main_in_ec: MT
+    out_ecs:
+    - ec_id: AirOut
+      out_eff: 1 kWh/kWh
+    #main_out_ec:
