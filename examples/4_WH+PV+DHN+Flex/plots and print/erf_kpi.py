@@ -26,13 +26,18 @@ CS_HEAT_PER_W = 0.9 + 0.48  # heat leaving CS_hybrid per unit of W (check 1) [kW
 # =====================================================
 # symbol: (results file, variable, carrier, tech, unit, optional)
 # Optional flows are 0 when the case has no such variable (I_HT, X_HT in 1_WH).
+# HP_IN: heat-pump inputs are V_ConvTechIn while HP_AW/HP_WW are `type: conversion`
+# (reference cases) and V_HpTechIn once they are `type: heatpump` (Step 1,
+# formulation/01_heatpump_balance.md). Same carrier, same tech; exactly one may exist.
+
+HP_IN = ("V_ConvTechIn", "V_HpTechIn")
 
 FLOWS = {
     "W":        ("tech-TS", "V_ConvTechOut", "WH", "DC", "kW", False),
     "Q_CS_HT":  ("tech-TS", "V_ConvTechOut", "HT", "CS_hybrid", "kW", False),
     "Q_CS_Air": ("tech-TS", "V_ConvTechOut", "Air", "CS_hybrid", "kW", False),
     "A_imp":    ("import_export-TS", "V_Imp", "Air", None, "kW", False),
-    "A_HP":     ("tech-TS", "V_ConvTechIn", "Air", "HP_AW", "kW", False),
+    "A_HP":     ("tech-TS", HP_IN, "Air", "HP_AW", "kW", False),
     "R_MT":     ("tech-TS", "V_ConvTechIn", "MT", "HE_LT", "kW", False),
     "I_HT":     ("import_export-TS", "V_Imp", "HT", None, "kW", True),
     "X_HT":     ("import_export-TS", "V_Exp", "HT", None, "kW", True),
@@ -43,8 +48,8 @@ FLOWS = {
     "D_MT":     ("loads-TS", "V_DemandSupply", "MT", None, "kW", False),
     "P_DC":     ("tech-TS", "V_ConvTechIn", "El", "DC", "kW", False),
     "P_CS":     ("tech-TS", "V_ConvTechIn", "El", "CS_hybrid", "kW", False),
-    "P_HPAW":   ("tech-TS", "V_ConvTechIn", "El", "HP_AW", "kW", False),
-    "P_HPWW":   ("tech-TS", "V_ConvTechIn", "El", "HP_WW", "kW", False),
+    "P_HPAW":   ("tech-TS", HP_IN, "El", "HP_AW", "kW", False),
+    "P_HPWW":   ("tech-TS", HP_IN, "El", "HP_WW", "kW", False),
     "P_Ch":     ("tech-TS", "V_ConvTechIn", "El", "Chiller", "kW", False),
 }
 
@@ -76,15 +81,21 @@ def read_ts(path):
 
 
 def get_flow(ts_files, symbol):
-    """Hourly series of one flow from FLOWS, matched on variable, carrier and tech."""
+    """
+    Hourly series of one flow from FLOWS, matched on variable, carrier and tech.
+    A tuple of variables (HP_IN) means: whichever of them the case has.
+    """
     file, var, ec, tech, unit, optional = FLOWS[symbol]
     head, data = ts_files[file]
-    mask = head.loc["Entry"].str.endswith(f"({var})")
+    var_names = var if isinstance(var, tuple) else (var,)
+    mask = head.loc["Entry"].str.endswith(tuple(f"({v})" for v in var_names))
     if ec is not None:
         mask &= head.loc["Ec"] == ec
     if tech is not None:
         mask &= head.loc["Tech"] == tech
     cols = mask[mask].index
+    if len(cols) == 1:
+        used_var[symbol] = head.loc["Entry", cols[0]].rsplit("(", 1)[1].rstrip(")")
     if len(cols) == 0:
         if optional:
             absent.add(symbol)
@@ -103,7 +114,8 @@ def opt_vars_sum(opt_vars, symbol):
     Storage energy is indexed by S_TimeHorizon, all flows by S_Time.
     """
     _, var, ec, tech, _, _ = FLOWS[symbol]
-    f = (opt_vars.var_name == var) & (opt_vars.S_Time.notna() | opt_vars.S_TimeHorizon.notna())
+    var_names = var if isinstance(var, tuple) else (var,)
+    f = opt_vars.var_name.isin(var_names) & (opt_vars.S_Time.notna() | opt_vars.S_TimeHorizon.notna())
     if ec is not None:
         f &= opt_vars.S_Ec == ec
     if tech is not None:
@@ -119,6 +131,7 @@ res = args.case / args.results
 
 ts_files = {n: read_ts(res / f"{n}.csv") for n in ("tech-TS", "import_export-TS", "loads-TS")}
 absent = set()  # optional flows the case does not have (set to 0)
+used_var = {}  # symbol -> model variable actually read
 f = {s: get_flow(ts_files, s) for s in FLOWS}
 
 # Final TESHT level after the last hour [kWh] (tech.csv, not a time series)
@@ -215,6 +228,8 @@ checks["5  hours with I_HT > 0 and X_HT > 0"] = (
 print(f"Case: {args.case}  ({res})")
 print(f"Parse check (TS files vs opt_vars.csv annual sums): "
       f"{'PASS' if not parse_bad else 'FAIL: ' + ', '.join(parse_bad)}")
+print("Heat-pump inputs read from: "
+      + ", ".join(f"{s} = {used_var[s]}" for s in FLOWS if isinstance(FLOWS[s][1], tuple)))
 
 print("\nERF terms (check 4) [MWh/a]")
 print(f"  Q_CS_HT                 {mwh(f['Q_CS_HT']):10.2f}")
