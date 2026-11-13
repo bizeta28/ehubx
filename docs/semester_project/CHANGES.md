@@ -1,5 +1,60 @@
 # Implementation-side change log
 
+## 2026-11-13 · `formulation/05_workload_flexibility.md` · backlog mode of `load_shifting`
+- **Changed (code only, no case folder, no data):**
+  - `load_shifting_data.py`: `mode` (`interval` default | `backlog`), `deadline_type` (`rolling` | `calendar`),
+    `window`, `deadline_hours`, `late_cost` (π_w), `backlog_cost` (ε), profile `arrival_flex` (θ_w·a_w).
+    Validation: interval mode needs `interval_length` and rejects backlog keys. Backlog mode needs
+    `deadline_type`, `late_cost`, `backlog_cost` (unit CHF/(ec_unit·h), ≥ 0) and `fix_cost` = 0. Rolling also needs
+    `window` (whole hours ≥ 1) and an `arrival_flex` profile, calendar needs `deadline_hours` in 0..23. Warning if
+    `max_below_abs` ≠ `arrival_flex` (both are θ_w·a_w by (4)).
+  - `load_shifting_parser.py`: new YAML keys and profile key `arrival_flex`. `interval_length` is mandatory only in
+    interval mode.
+  - `load_shifting_model.py`: `S_LoadShiftingBacklog`, `V_LoadShiftingBacklog` B ≥ 0 (2), `V_LoadShiftingLate` L ≥ 0,
+    `C_LoadShiftingBacklog` (1), `C_LoadShiftingDeadline` (3a)/(3b). Objective (8) via `V_LoadShiftingCostLate` and
+    `V_LoadShiftingCostBacklog`, added to `C_LoadShiftingCostTotal` → `V_SystemCost`. Interval neutrality and
+    interval cap are skipped for backlog tuples. Guard: error if the time series is clustered, a weight ≠ 1 or the
+    time ids are not consecutive. (4)–(7) use the existing objects (`max_below_abs`, `max_above_abs`, DC cap,
+    `C_LoadShiftingNeutralityOverall`), as §4 says.
+  - Writers: B(t), L(t) in `loads_*-TS.csv`, both cost terms in `loads_*.csv`. `S_LoadShiftingBacklog` is registered in
+    `opt_vars_writer` so `opt_vars.csv` keeps the full index. `interval_length` row only if set.
+- **Spec §5 checks:**
+  1. Time ids are consecutive integers 1..N (`time_parser.py`), sorted in `S_Time`. The CSV profiles have no
+     timestamps. The solar irradiance (`4_WH+PV+DHN+Flex`) with t=1 read as 00:00 has light in hours 07–15 in January
+     and 03–18 in June, peaking at 11. So t=1 is a midnight in winter, but the series looks like **UTC**, i.e. ~1 h
+     (CET) / 2 h (CEST) before local clock time. Not checked for the IT and demand profiles.
+  2. The unit parser accepts `CHF/kWh/h` and `CHF/(kWh*h)` (converted correctly). `late_cost` / `backlog_cost` are
+     enforced as CHF/(ec_unit·h) as in the spec §2 table. `1 CHF/kWh` (the YAML sketch) is rejected at parse time.
+  3. Results report s = `V_LoadShifting` (unchanged); above/below stay non-unique with zero energy cost.
+  4. Weights guarded (above).
+  5. `4_WH+PV+DHN+Flex` already has DC `cap_min = cap_max = 20 kW`.
+  6. `tests/tests_model/test_load_shifting_backlog.py` (tiny cases, Gurobi, placeholder values): θ = 0 equals the
+     no-shift baseline. Flat price + ε gives s ≡ 0. Dip inside W = 6 h moves exactly the work of hours 7..12 into
+     hour 13. The hardware cap limits catch-up. Dip beyond W with large π gives no shift and L ≡ 0. Small π gives a
+     soft deadline: L summed over hours = 9 kWh·h, cost = 9·π. Calendar: B = 0 at every deadline hour and work goes
+     to the cheap hour before the deadline, not the cheaper one after. Plus the guard, the interval mode and
+     validation errors.
+- **Tested:** new tests 18/18 pass. `tests/tests_data` + `tests/tests_parser` 785/785 pass (as before). Reference
+  case `4_WH+PV+DHN+Flex`, built from a scratch copy with `HEAD` code and with the new code: 517,003 vars /
+  736,732 cons in both, and the LP file is **byte-identical** with `PYTHONHASHSEED=0`. Without a fixed seed, LP
+  constraint order and the 15th digit of some coefficients vary between runs (string-hash order). This happens with
+  the old code too. Not solved (no case with backlog mode exists yet).
+  Pre-existing, unchanged: the full `pytest tests` run has 233 order-dependent failures (they pass per directory),
+  and `test_examples_smalldemo` needs GLPK, which is not installed.
+- **Open issues (design side):**
+  1. **Calendar hour convention.** Implemented as in the §4 sketch: `deadline_hours: [6]` constrains B(t) for
+     (t−1) mod 24 = 6. B(t) is the backlog at the *end* of hour t, so this is "empty by 07:00" (work may still run
+     06:00–07:00), if t=1 is 00:00–01:00. If "empty at 06:00" is meant, the test is (t−1) mod 24 = 5 (one line in
+     `__rule_deadline`). Combined with check 1 (profiles likely UTC), the clock time can be off by 1–3 h.
+  2. **Rolling window boundary.** With (3a), work that arrives in hour τ leaves the right-hand side at t = τ + W, so it
+     may still run *in* hour τ + W (W = 1 allows a one-hour delay). The tests pin this reading. Confirm that it is the
+     intended one (§3 "derivation still to be checked").
+  3. **Reported TAC includes the penalties.** π·ΣL + ε·ΣB enter `V_SystemCost`. Subtract `V_LoadShiftingCostLate` and
+     `V_LoadShiftingCostBacklog` for the system cost. In the tiny dip case ε·ΣB = 0.0021 CHF.
+  4. §6 decisions still open (archetype classes, π values, tardiness vs SLA, ρ_w source). The code implements
+     the approved per kWh·h form.
+  5. Nothing pushed.
+
 ## 2026-10-27 · `formulation/01_heatpump_balance.md` + `03_air_lt_direction.md` · Steps 1, 3 and 1+3
 - **Changed:** both specs committed with status "approved by Bea, 26 Oct 2026". Six new case folders,
   copied from the references (`inputs/` + `main_small_demo.py` only). `1_WH` and `4_WH+PV+DHN+Flex` are untouched:
