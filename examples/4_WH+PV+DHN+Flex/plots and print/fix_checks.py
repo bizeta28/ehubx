@@ -4,7 +4,7 @@ formulation/03_air_lt_direction.md (Step 3), plus the results-table row
 (TAC, capacities, TES). ERF, DoC and DoC_E come from erf_kpi.py.
 
 One script for the whole 1_WH family of cases. Run from the repo root:
-    python "examples/4_WH+PV+DHN+Flex/plots and print/fix_checks.py" examples/1_WH_fix1
+    python "examples/4_WH+PV+DHN+Flex/plots and print/fix_checks.py" examples/1_WH_fix1+3
 Optional second argument: results subfolder (default: results).
 
 Step 1 checks run when HP_AW/HP_WW are `type: heatpump` (V_HpTechIn in the results),
@@ -75,7 +75,7 @@ def cop_profile(case, tech):
 mwh = lambda x: x.sum() / 1e3  # annual sum [MWh/a]
 
 parser = argparse.ArgumentParser(description="Section 5 checks of specs 01 and 03")
-parser.add_argument("case", type=Path, help="case folder, e.g. examples/1_WH_fix1")
+parser.add_argument("case", type=Path, help="case folder, e.g. examples/1_WH_fix1+3")
 parser.add_argument("results", nargs="?", default="results", help="results subfolder")
 args = parser.parse_args()
 res = args.case / args.results
