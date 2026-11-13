@@ -1,0 +1,16 @@
+- stages: S1
+  hubs: H1
+  ec: HT
+  min:
+  #price: 0.1887 CHF/kWh
+
+- stages: S1
+  hubs: H1
+  ec: El
+  #price: 0.03 CHF/kWh #is this accounted as a revenue? double check
+
+- stages: S1
+  hubs: H1
+  ec: AirOut
+
+

@@ -48,3 +48,7 @@ docs/semester_project/private/
 # Generated post-processing outputs and OS files
 **/csv_files/
 .DS_Store
+
+# Semester project (spec 05): generated workload profiles, reproducible from
+# demands.csv + inputs/workload_params*.yaml via scripts/make_workload_profiles.py
+examples/**/loadshifting_workload*.csv

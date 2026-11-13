@@ -1,0 +1,21 @@
+# theta = 0 regression (spec 05 v3, §5.3): same archetypes as workload_params.yaml
+# with no deferrable share. The result must match 4_WH+PV+DHN+Flex_fix1+3_noflex.
+demands_csv: basic/profiles/demands.csv
+output_csv: basic/profiles/loadshifting_workload.csv
+ec: IT
+stage: S1
+hub: H1
+demands_yaml_dir: basic
+late_cost: 10 CHF/(kWh*h)
+backlog_cost: 0.0001 CHF/(kWh*h)
+archetypes:
+- id: batch_rolling
+  alpha: 0.5
+  theta: 0.0
+  deadline_type: rolling
+  window: 24 h
+- id: batch_calendar
+  alpha: 0.5
+  theta: 0.0
+  deadline_type: calendar
+  deadline_hours: [5]

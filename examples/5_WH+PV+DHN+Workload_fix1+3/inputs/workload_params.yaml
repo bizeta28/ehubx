@@ -1,0 +1,24 @@
+# Parameter file for scripts/make_workload_profiles.py
+# (spec 05 v3, §4 "Profiles and pre-processing script", §6.2 placeholder values).
+# Smoke run: alpha_R = alpha_C = 0.5, theta_w = 0.1 (matches ls3), W_R = 24 h, h^D_C = 5.
+# Placeholders only; real values come from the parameter research.
+# Paths are relative to this file.
+demands_csv: basic/profiles/demands.csv
+output_csv: basic/profiles/loadshifting_workload.csv
+ec: IT
+stage: S1
+hub: H1
+demands_yaml_dir: basic
+late_cost: 10 CHF/(kWh*h)
+backlog_cost: 0.0001 CHF/(kWh*h)
+archetypes:
+- id: batch_rolling
+  alpha: 0.5          # share of d_IT(t), sum over archetypes must be 1
+  theta: 0.1          # deferrable share
+  deadline_type: rolling
+  window: 24 h        # W_w, maximum delay
+- id: batch_calendar
+  alpha: 0.5
+  theta: 0.1
+  deadline_type: calendar
+  deadline_hours: [5] # h^D_w in model time (UTC): empty at 05:00 UTC = 06:00 CET

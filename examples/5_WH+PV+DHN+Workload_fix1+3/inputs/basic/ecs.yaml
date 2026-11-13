@@ -1,0 +1,21 @@
+ecs:
+- ec_id: Solar
+  unit: kWh
+- ec_id: El
+  unit: kWh
+- ec_id: IT
+  unit: kWh
+- ec_id: WH
+  unit: kWh
+- ec_id: MT
+  unit: kWh
+- ec_id: HT
+  unit: kWh
+- ec_id: Air
+  unit: kWh
+- ec_id: LT
+  unit: kWh
+- ec_id: AirOut
+  unit: kWh
+- ec_id: HPdummy # Step 1: cooling-mode carrier of HP_AW/HP_WW, no demand/import/export -> cooling mode = 0
+  unit: kWh

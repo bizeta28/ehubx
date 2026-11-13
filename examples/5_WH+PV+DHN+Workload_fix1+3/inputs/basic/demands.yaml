@@ -1,0 +1,33 @@
+# Workload flexibility, spec 05 v3 (docs/semester_project/formulation/05_workload_flexibility.md).
+# Copy of 4_WH+PV+DHN+Flex_fix1+3 with the interval-mode ls3 replaced by two
+# backlog-mode archetypes (§4 input sketch, §6.2 placeholder values).
+#
+# profiles/loadshifting_workload.csv is GENERATED (not committed) by
+#   python scripts/make_workload_profiles.py examples/5_WH+PV+DHN+Workload_fix1+3/inputs/workload_params.yaml
+# or by main_small_demo.py, which regenerates it from the parameter file given
+# on the command line. It holds arrival_flex = max_below_abs = theta_w * alpha_w * d_IT(t).
+demand_profiles:
+- profiles/demands.csv
+
+load_shifting:
+- load_shift_id: batch_rolling
+  stages: S1
+  hubs: H1
+  ec: IT
+  mode: backlog
+  deadline_type: rolling
+  window: 24 h                      # W_w, maximum delay (§3 (3a), §6.6)
+  late_cost: 10 CHF/(kWh*h)         # pi_w, effectively hard (§3 (8), §6.3)
+  backlog_cost: 0.0001 CHF/(kWh*h)  # epsilon, tie-break (§2)
+  profile_path: profiles/loadshifting_workload.csv
+
+- load_shift_id: batch_calendar
+  stages: S1
+  hubs: H1
+  ec: IT
+  mode: backlog
+  deadline_type: calendar
+  deadline_hours: [5]               # queue empty at 05:00 UTC = 06:00 CET (§3 (3b), §6.5)
+  late_cost: 10 CHF/(kWh*h)
+  backlog_cost: 0.0001 CHF/(kWh*h)
+  profile_path: profiles/loadshifting_workload.csv

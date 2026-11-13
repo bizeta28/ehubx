@@ -1,0 +1,4 @@
+# No-flex reference for spec 05 v3 (formulation/05_workload_flexibility.md, §5.3):
+# 4_WH+PV+DHN+Flex_fix1+3 with the interval-mode load shifting (ls3) removed.
+demand_profiles:
+- profiles/demands.csv
