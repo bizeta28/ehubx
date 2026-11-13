@@ -67,6 +67,12 @@ ENTRY_LOADSHIFTINGCOSTBACKLOG: str = (
 )
 """Entry name for the backlog tie-break cost (spec 05) in result files"""
 
+ENTRY_LOADSHIFTINGLATESUM: str = (
+    f"Total lateness (sum_t {load_shifting_model.VAR_LOADSHIFTINGLATE} * dt)"
+)
+"""Entry name for the lateness sum_t L_w(t) dt of a backlog-mode load shift
+id (spec 05 v3 §5.4: must be 0 in every run)"""
+
 ENTRY_CAPMIN: str = "Minimal load shifting capacity (cap_min)"
 """Entry name for load shifting parameter 'cap_min' in result files"""
 
@@ -292,6 +298,21 @@ def _format_ls_and_tuple(
                     source=SOURCE,
                     in_res="result",
                 )
+        # sum_t L_w(t) dt [ec_unit * h] (spec 05 v3 §4 reporting, §5.4)
+        late_sum = load_shifting_model.late_sum(model, ls.key, s.key, h.key, e.key)
+        if late_sum is not None:
+            late_unit = ec_unit * TimeUnit.H
+            df_st_builder.add_row(
+                ENTRY_LOADSHIFTINGLATESUM,
+                Value(late_sum, unit=late_unit),
+                unit=late_unit,
+                stage=s.key,
+                hub=h.key,
+                ec=e.key,
+                load_shift=ls.key,
+                source=SOURCE,
+                in_res="result",
+            )
 
     # cap_min
     cap_min = energy_system.load_shifting.get_cap_min(ls)

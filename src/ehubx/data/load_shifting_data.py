@@ -3,6 +3,7 @@ Load shifting data module
 """
 
 import itertools
+import math
 from enum import Enum
 from typing import Dict, List, Set, Tuple
 
@@ -1042,7 +1043,11 @@ class LoadShifting:
         return self._deadline_hours[ls]
 
     def set_deadline_hours(self, ls: LoadShiftId, deadline_hours: List[int]) -> None:
-        """Set the deadline hours (hour of day, 0..23) of a calendar load shift id."""
+        """
+        Set the deadline hours h^D (0..23) of a calendar load shift id: clock
+        hours in model time (UTC) by which the queue is empty, i.e. B(t) = 0
+        for t mod 24 = h^D (spec 05 v3, (3b)).
+        """
         self._check_id(ls, ExceptionKey.DEADLINEHOURS_SET)
         self._deadline_hours[ls] = list(deadline_hours)
 
@@ -1415,6 +1420,21 @@ class LoadShifting:
                 logging.log_warning(
                     f"max_below_abs[{ls}] differs from arrival_flex[{ls}]. "
                     "Spec 05 (4) expects both to be theta_w * a_w(t).",
+                    module=LOG_MODULE_STR,
+                )
+            # Spec v3 (5): catch-up is limited by the shared DC capacity only.
+            # max_above_abs (the per-archetype cap rho_w of v2) is not part of
+            # the formulation any more. It is optional (default infinity, no
+            # constraint), so warn if an input still sets it.
+            above = self._max_above_abs[ls]
+            above_def = above.def_value
+            if above.has_values or (
+                above_def is not None and not math.isinf(above_def.to_float())
+            ):
+                logging.log_warning(
+                    f"max_above_abs[{ls}] is set in mode 'backlog'. Spec 05 v3 "
+                    "has no per-archetype catch-up cap ((5) is the DC capacity); "
+                    "the value is applied as given.",
                     module=LOG_MODULE_STR,
                 )
 

@@ -3,17 +3,23 @@ to files"""
 
 import os
 from datetime import datetime
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 from pyomo.core import Model, Objective, value
 
 import ehubx.data.exceptions as data_exceptions
 from ehubx.core import exceptions, logging
+from ehubx.data.ec_data import EcId
 from ehubx.data.energy_system_data import EnergySystem
-from ehubx.data.unit import DimlessUnit
+from ehubx.data.unit import DimlessUnit, TimeUnit
 from ehubx.data.value import Value
-from ehubx.model import energy_system_model, self_sufficiency_model
+from ehubx.model import (
+    ec_model,
+    energy_system_model,
+    load_shifting_model,
+    self_sufficiency_model,
+)
 from ehubx.writer import (
     conv_tech_writer,
     demand_writer,
@@ -103,6 +109,32 @@ ENTRY_SYSTEMCO2TOTAL: str = (
 
 ENTRY_SYSTEMCOST: str = f"Cost ({energy_system_model.VAR_SYSTEMCOST})"
 """Entry name for the cost variable in result files"""
+
+ENTRY_SYSTEMCOSTNOPENALTY: str = (
+    f"System cost without load shifting penalties (TAC_sys = "
+    f"{energy_system_model.VAR_SYSTEMCOST} - "
+    f"{load_shifting_model.VAR_LOADSHIFTINGCOSTLATE} - "
+    f"{load_shifting_model.VAR_LOADSHIFTINGCOSTBACKLOG})"
+)
+"""Entry name for the system cost net of the backlog-mode penalties
+(spec 05 v3 §4, reporting). Written only if a backlog-mode load shift exists."""
+
+ENTRY_LOADSHIFTINGCOSTLATETOTAL: str = (
+    f"Total lateness penalty (sum {load_shifting_model.VAR_LOADSHIFTINGCOSTLATE})"
+)
+"""Entry name for sum_w pi_w sum_t L_w(t) dt over all backlog-mode load shifts"""
+
+ENTRY_LOADSHIFTINGCOSTBACKLOGTOTAL: str = (
+    "Total backlog tie-break cost (eps * sum B = sum "
+    f"{load_shifting_model.VAR_LOADSHIFTINGCOSTBACKLOG})"
+)
+"""Entry name for eps * sum_(w,t) B_w(t) dt over all backlog-mode load shifts"""
+
+ENTRY_LOADSHIFTINGLATETOTAL: str = (
+    f"Total lateness (sum_t {load_shifting_model.VAR_LOADSHIFTINGLATE} * dt)"
+)
+"""Entry name for sum_(w,t) L_w(t) dt over all backlog-mode load shifts of one
+energy carrier (spec 05 v3 §5.4: must be 0)"""
 
 ENTRY_SYSTEMAUTONOMY: str = f"Cost ({energy_system_model.VAR_SYSTEMAUTONOMY})"
 """Entry name for the autonomy variable in result files"""
@@ -204,6 +236,86 @@ def write_all(
         ),
         module=LOG_MODULE_STR,
     )
+
+
+def _format_backlog_penalties(
+    energy_system: EnergySystem,
+    model: Model,
+    cost: Optional[float],
+    df_st_builder: DfStBuilder,
+) -> None:
+    """
+    Rows for spec 05 v3 §4 (reporting): TAC_sys = V_SystemCost -
+    sum V_LoadShiftingCostLate - sum V_LoadShiftingCostBacklog, the two
+    penalty totals [CHF] and sum_(w,t) L_w(t) dt per energy carrier
+    [ec_unit * h]. Nothing is written if no load shift id is in mode
+    'backlog' (then TAC_sys would equal V_SystemCost).
+    """
+    backlog_set = getattr(model, load_shifting_model.SET_LOADSHIFTINGBACKLOG, None)
+    if backlog_set is None or len(backlog_set) == 0 or cost is None:
+        return
+    currency_unit = energy_system.currency_unit
+    late_cost = 0.0
+    backlog_cost = 0.0
+    late_sum_per_ec: Dict[str, float] = {}
+    for ls, s, h, e in backlog_set:
+        late_fl = value(
+            getattr(model, load_shifting_model.VAR_LOADSHIFTINGCOSTLATE)[ls, s, h, e],
+            exception=False,
+        )
+        backlog_fl = value(
+            getattr(model, load_shifting_model.VAR_LOADSHIFTINGCOSTBACKLOG)[
+                ls, s, h, e
+            ],
+            exception=False,
+        )
+        late_sum = load_shifting_model.late_sum(model, ls, s, h, e)
+        if late_fl is None or backlog_fl is None or late_sum is None:
+            return
+        late_cost += late_fl
+        backlog_cost += backlog_fl
+        late_sum_per_ec[e] = late_sum_per_ec.get(e, 0.0) + late_sum
+    df_st_builder.add_row(
+        ENTRY_SYSTEMCOSTNOPENALTY,
+        Value(cost - late_cost - backlog_cost, unit=currency_unit),
+        unit=currency_unit,
+        source=SOURCE,
+        in_res="result",
+    )
+    df_st_builder.add_row(
+        ENTRY_LOADSHIFTINGCOSTLATETOTAL,
+        Value(late_cost, unit=currency_unit),
+        unit=currency_unit,
+        source=SOURCE,
+        in_res="result",
+    )
+    df_st_builder.add_row(
+        ENTRY_LOADSHIFTINGCOSTBACKLOGTOTAL,
+        Value(backlog_cost, unit=currency_unit),
+        unit=currency_unit,
+        source=SOURCE,
+        in_res="result",
+    )
+    for e, late_sum in late_sum_per_ec.items():
+        late_unit = (
+            ec_model.get_ec_model_unit(
+                energy_system.ecs.get_unit(EcId(e)),
+                energy_system.mass_unit,
+                energy_system.power_unit,
+                energy_system.length_unit,
+                energy_system.passenger_unit,
+                energy_system.freight_unit,
+            )
+            * TimeUnit.H
+        )
+        df_st_builder.add_row(
+            ENTRY_LOADSHIFTINGLATETOTAL,
+            Value(late_sum, unit=late_unit),
+            unit=late_unit,
+            ec=e,
+            source=SOURCE,
+            in_res="result",
+        )
 
 
 def _format_all_system(
@@ -350,6 +462,12 @@ def _format_all_system(
         source=SOURCE,
         in_res="result",
     )
+
+    # Backlog-mode load shifting (spec 05 v3 §4, reporting): the penalties
+    # pi * sum L and eps * sum B are part of V_SystemCost. Write the system
+    # cost without them, TAC_sys, and the penalty totals, so that no
+    # subtraction by hand is needed in post-processing.
+    _format_backlog_penalties(energy_system, model, cost, df_st_builder)
 
     # System CO2
     var = getattr(model, energy_system_model.VAR_SYSTEMCO2)
