@@ -99,6 +99,46 @@ class ExceptionKey(Enum):
     FIXCOST_DEFSET = "setting default 'fix_cost' of LoadShifting"
     FIXCOST_GET = "getting 'fix_cost' from LoadShifting"
     FIXCOST_VAL = "validating 'fix_cost' of LoadShifting"
+    MODE_SET = "setting 'mode' of LoadShifting"
+    MODE_GET = "getting 'mode' from LoadShifting"
+    DEADLINETYPE_SET = "setting 'deadline_type' of LoadShifting"
+    DEADLINETYPE_GET = "getting 'deadline_type' from LoadShifting"
+    WINDOW_SET = "setting 'window' of LoadShifting"
+    WINDOW_GET = "getting 'window' from LoadShifting"
+    DEADLINEHOURS_SET = "setting 'deadline_hours' of LoadShifting"
+    DEADLINEHOURS_GET = "getting 'deadline_hours' from LoadShifting"
+    LATECOST_SET = "setting 'late_cost' of LoadShifting"
+    LATECOST_GET = "getting 'late_cost' from LoadShifting"
+    BACKLOGCOST_SET = "setting 'backlog_cost' of LoadShifting"
+    BACKLOGCOST_GET = "getting 'backlog_cost' from LoadShifting"
+    ARRIVALFLEX_SET = "setting 'arrival_flex' of LoadShifting"
+    ARRIVALFLEX_GET = "getting 'arrival_flex' from LoadShifting"
+    BACKLOG_VAL = "validating backlog-mode parameters of LoadShifting"
+
+
+class LoadShiftMode(Enum):
+    """
+    Load shifting formulation of a load shift id.
+    INTERVAL: original ehubX formulation (bidirectional, neutral on
+    non-overlapping intervals of length 'interval_length').
+    BACKLOG: delay-only backlog formulation with deadlines
+    (formulation/05_workload_flexibility.md).
+    """
+
+    INTERVAL = "interval"
+    BACKLOG = "backlog"
+
+
+class DeadlineType(Enum):
+    """
+    Deadline type of a backlog-mode load shift id
+    (formulation/05_workload_flexibility.md, constraints (3a) and (3b)).
+    ROLLING: every unit of work must run within 'window' hours of arrival.
+    CALENDAR: the backlog must be empty at fixed hours of the day.
+    """
+
+    ROLLING = "rolling"
+    CALENDAR = "calendar"
 
 
 # -------- #
@@ -186,6 +226,10 @@ class LoadShifting:
         self._max_below_rel[ls] = TimeSeries()
         self._energy_cost_below[ls] = TimeSeries()
         self._fix_cost[ls] = TimeSeries()
+        # Backlog mode (spec 05): default is the original interval formulation.
+        # arrival_flex has no default value on purpose (see get_arrival_flex).
+        self._mode[ls] = LoadShiftMode.INTERVAL
+        self._arrival_flex[ls] = TimeSeries()
         self._max_above_abs[ls].def_value = Value(
             DEF_MAXABOVEABS, unit=(ec_unit / TimeUnit.H)
         )
@@ -917,6 +961,139 @@ class LoadShifting:
             f"does not match expected unit '{expected_unit}'"
         self._fix_cost[ls].def_value = fix_cost_def
 
+    # ------------------------------------------------------------------ #
+    # Backlog mode (formulation/05_workload_flexibility.md)               #
+    # ------------------------------------------------------------------ #
+    def get_mode(self, ls: LoadShiftId) -> LoadShiftMode:
+        """
+        Get the load shifting formulation ('mode') of a load shift id:
+        'interval' (default, original ehubX behaviour) or 'backlog'
+        (delay-only backlog with deadlines, spec 05).
+        """
+        self._check_id(ls, ExceptionKey.MODE_GET)
+        return self._mode[ls]
+
+    def set_mode(self, ls: LoadShiftId, mode: LoadShiftMode) -> None:
+        """Set the load shifting formulation ('mode') of a load shift id."""
+        self._check_id(ls, ExceptionKey.MODE_SET)
+        self._mode[ls] = mode
+
+    def is_backlog(self, ls: LoadShiftId) -> bool:
+        """Whether a load shift id uses the backlog formulation (spec 05)."""
+        return self.get_mode(ls) == LoadShiftMode.BACKLOG
+
+    def has_interval_length(self, ls: LoadShiftId) -> bool:
+        """Whether 'interval_length' is set (it is optional in backlog mode)."""
+        self._check_id(ls, ExceptionKey.INTERVALLENGTH_GET)
+        return ls in self._interval_length
+
+    def get_deadline_type(self, ls: LoadShiftId) -> DeadlineType:
+        """
+        Get the deadline type of a backlog-mode load shift id: 'rolling'
+        (constraint (3a)) or 'calendar' (constraint (3b)). Mandatory in
+        backlog mode.
+        """
+        self._check_id(ls, ExceptionKey.DEADLINETYPE_GET)
+        if ls not in self._deadline_type:
+            raise exceptions.MissingIdException(
+                ExceptionKey.DEADLINETYPE_GET.value, ls, module=LOG_MODULE_STR
+            )
+        return self._deadline_type[ls]
+
+    def set_deadline_type(self, ls: LoadShiftId, deadline_type: DeadlineType) -> None:
+        """Set the deadline type of a backlog-mode load shift id."""
+        self._check_id(ls, ExceptionKey.DEADLINETYPE_SET)
+        self._deadline_type[ls] = deadline_type
+
+    def get_window(self, ls: LoadShiftId) -> Value:
+        """
+        Get the rolling window W_w [h] of a rolling-deadline load shift id:
+        work must run within W_w hours of its arrival (constraint (3a)).
+        """
+        self._check_id(ls, ExceptionKey.WINDOW_GET)
+        if ls not in self._window:
+            raise exceptions.MissingIdException(
+                ExceptionKey.WINDOW_GET.value, ls, module=LOG_MODULE_STR
+            )
+        return self._window[ls]
+
+    def set_window(self, ls: LoadShiftId, window: Value) -> None:
+        """Set the rolling window W_w [h] of a rolling-deadline load shift id."""
+        self._check_id(ls, ExceptionKey.WINDOW_SET)
+        if not window.unit.same_type_as(TimeUnit.H):
+            raise exceptions.DataException(
+                ExceptionKey.WINDOW_SET.value,
+                [ls],
+                f"window must be a time value, but has unit '{window.unit}'",
+                module=LOG_MODULE_STR,
+            )
+        self._window[ls] = window
+
+    def get_deadline_hours(self, ls: LoadShiftId) -> List[int]:
+        """
+        Get the deadline hours of a calendar-deadline load shift id, as
+        hour-of-day integers 0..23 (constraint (3b), set T^D_w).
+        """
+        self._check_id(ls, ExceptionKey.DEADLINEHOURS_GET)
+        if ls not in self._deadline_hours:
+            raise exceptions.MissingIdException(
+                ExceptionKey.DEADLINEHOURS_GET.value, ls, module=LOG_MODULE_STR
+            )
+        return self._deadline_hours[ls]
+
+    def set_deadline_hours(self, ls: LoadShiftId, deadline_hours: List[int]) -> None:
+        """Set the deadline hours (hour of day, 0..23) of a calendar load shift id."""
+        self._check_id(ls, ExceptionKey.DEADLINEHOURS_SET)
+        self._deadline_hours[ls] = list(deadline_hours)
+
+    def get_late_cost(self, ls: LoadShiftId) -> Value:
+        """
+        Get the lateness penalty pi_w [CHF/(ec_unit*h)], charged per unit of
+        overdue backlog and per hour (objective (8)). Mandatory in backlog mode.
+        """
+        self._check_id(ls, ExceptionKey.LATECOST_GET)
+        if ls not in self._late_cost:
+            raise exceptions.MissingIdException(
+                ExceptionKey.LATECOST_GET.value, ls, module=LOG_MODULE_STR
+            )
+        return self._late_cost[ls]
+
+    def set_late_cost(self, ls: LoadShiftId, late_cost: Value) -> None:
+        """Set the lateness penalty pi_w [CHF/(ec_unit*h)]."""
+        self._check_id(ls, ExceptionKey.LATECOST_SET)
+        self._late_cost[ls] = late_cost
+
+    def get_backlog_cost(self, ls: LoadShiftId) -> Value:
+        """
+        Get the tie-break cost epsilon [CHF/(ec_unit*h)] on the backlog
+        (objective (8)). Mandatory in backlog mode.
+        """
+        self._check_id(ls, ExceptionKey.BACKLOGCOST_GET)
+        if ls not in self._backlog_cost:
+            raise exceptions.MissingIdException(
+                ExceptionKey.BACKLOGCOST_GET.value, ls, module=LOG_MODULE_STR
+            )
+        return self._backlog_cost[ls]
+
+    def set_backlog_cost(self, ls: LoadShiftId, backlog_cost: Value) -> None:
+        """Set the tie-break cost epsilon [CHF/(ec_unit*h)] on the backlog."""
+        self._check_id(ls, ExceptionKey.BACKLOGCOST_SET)
+        self._backlog_cost[ls] = backlog_cost
+
+    def get_arrival_flex(self, ls: LoadShiftId) -> TimeSeries:
+        """
+        Get the profile 'arrival_flex' = theta_w * a_w(t) [ec_unit/h]: the
+        deferrable part of the arriving work. Right-hand side of the rolling
+        deadline (3a); mandatory for rolling deadlines. No default value.
+        """
+        self._check_id(ls, ExceptionKey.ARRIVALFLEX_GET)
+        return self._arrival_flex[ls]
+
+    def set_arrival_flex(self, ls: LoadShiftId, t: TimeId, arrival_flex: Value) -> None:
+        """Set 'arrival_flex' = theta_w * a_w(t) [ec_unit/h] at time t."""
+        self._check_id(ls, ExceptionKey.ARRIVALFLEX_SET)
+        self._arrival_flex[ls].set_value(t, arrival_flex)
+
     # ------------------------------- #
     # Secondary property: time_series #
     # ------------------------------- #
@@ -1062,6 +1239,14 @@ class LoadShifting:
         self._energy_cost_above: Dict[LoadShiftId, TimeSeries] = {}
         self._energy_cost_below: Dict[LoadShiftId, TimeSeries] = {}
         self._fix_cost: Dict[LoadShiftId, TimeSeries] = {}
+        # Backlog mode (spec 05)
+        self._mode: Dict[LoadShiftId, LoadShiftMode] = {}
+        self._deadline_type: Dict[LoadShiftId, DeadlineType] = {}
+        self._window: Dict[LoadShiftId, Value] = {}
+        self._deadline_hours: Dict[LoadShiftId, List[int]] = {}
+        self._late_cost: Dict[LoadShiftId, Value] = {}
+        self._backlog_cost: Dict[LoadShiftId, Value] = {}
+        self._arrival_flex: Dict[LoadShiftId, TimeSeries] = {}
 
     # ---------- #
     # Validation #
@@ -1104,6 +1289,134 @@ class LoadShifting:
         self._validate_energy_cost_below(ecs, times)
         self._validate_energy_cost_abovebelow_nonzero()
         self._validate_fix_cost(times)
+        self._validate_backlog(ecs, times)
+
+    def _validate_backlog(self, ecs: Ecs, times: Times) -> None:
+        """
+        Checks for the backlog mode (formulation/05_workload_flexibility.md).
+        Interval mode: interval_length is mandatory, backlog keys are not
+        allowed. Backlog mode: the parameters each deadline type needs must be
+        present, with the right units and signs, and fix_cost must be 0 (§4).
+        """
+        exc_key = ExceptionKey.BACKLOG_VAL.value
+        backlog_only = {
+            "deadline_type": self._deadline_type,
+            "window": self._window,
+            "deadline_hours": self._deadline_hours,
+            "late_cost": self._late_cost,
+            "backlog_cost": self._backlog_cost,
+        }
+
+        def _raise(ls: LoadShiftId, msg: str) -> None:
+            raise exceptions.DataException(exc_key, [ls], msg, module=LOG_MODULE_STR)
+
+        for ls in sorted(self.ids, key=lambda x: x.key):
+            ec_unit = ecs.get_unit(self._ec[ls])
+            # ---- interval mode: unchanged behaviour ----
+            if not self.is_backlog(ls):
+                if ls not in self._interval_length:
+                    _raise(ls, f"interval_length[{ls}] is mandatory in mode 'interval'")
+                for key, store in backlog_only.items():
+                    if ls in store:
+                        _raise(ls, f"{key}[{ls}] is only allowed in mode 'backlog'")
+                if self._arrival_flex[ls].has_values:
+                    _raise(ls, f"arrival_flex[{ls}] is only allowed in mode 'backlog'")
+                continue
+            # ---- backlog mode ----
+            if ls in self._interval_length:
+                logging.log_warning(
+                    f"interval_length[{ls}] is ignored in mode 'backlog'",
+                    module=LOG_MODULE_STR,
+                )
+            # fix_cost must be zero, otherwise V_YLoadShifting makes it a MILP
+            fix_cost = self._fix_cost[ls]
+            fix_vals = (
+                [fix_cost.get_value(t) for t in times.ids]
+                if fix_cost.has_values
+                else [fix_cost.def_value]
+            )
+            if any(v is not None and abs(v.to_float()) > EPS_ZEROCHECK for v in fix_vals):
+                _raise(ls, f"fix_cost[{ls}] must be 0 in mode 'backlog'")
+            # late_cost (pi_w) and backlog_cost (epsilon): mandatory,
+            # unit CHF/(ec_unit*h), nonnegative
+            cost_unit = CurrencyUnit.CHF / (ec_unit * TimeUnit.H)
+            for key, store in (
+                ("late_cost", self._late_cost),
+                ("backlog_cost", self._backlog_cost),
+            ):
+                if ls not in store:
+                    _raise(ls, f"{key}[{ls}] is mandatory in mode 'backlog'")
+                if not store[ls].unit.same_type_as(cost_unit):
+                    _raise(
+                        ls,
+                        f"Unit {store[ls].unit} of {key}[{ls}] does not match "
+                        f"expected unit {cost_unit} (cost per unit of backlog "
+                        "and per hour, e.g. 'CHF/kWh/h')",
+                    )
+                if store[ls].is_negative:
+                    _raise(ls, f"{store[ls]} = {key}[{ls}] < 0")
+            # arrival_flex (theta_w * a_w): unit, known time ids, nonnegative
+            arrival = self._arrival_flex[ls]
+            if arrival.has_values:
+                assert arrival.unit is not None
+                if not arrival.unit.same_type_as(ec_unit / TimeUnit.H):
+                    _raise(
+                        ls,
+                        f"Unit {arrival.unit} of arrival_flex[{ls}] does not "
+                        f"match expected unit {ec_unit / TimeUnit.H}",
+                    )
+                arrival.validate(times, exc_key, module=LOG_MODULE_STR)
+                for t in times.ids:
+                    if arrival.get_value(t).is_negative:
+                        _raise(ls, f"arrival_flex[{ls}][{t}] < 0")
+            # deadline type specific parameters
+            if ls not in self._deadline_type:
+                _raise(ls, f"deadline_type[{ls}] is mandatory in mode 'backlog'")
+            if self._deadline_type[ls] == DeadlineType.ROLLING:
+                if ls in self._deadline_hours:
+                    _raise(ls, f"deadline_hours[{ls}] is only allowed for calendar")
+                if ls not in self._window:
+                    _raise(ls, f"window[{ls}] is mandatory for rolling deadlines")
+                window_h = self._window[ls].to_float(unit=TimeUnit.H)
+                if window_h < 1 or abs(window_h - round(window_h)) > EPS_ZEROCHECK:
+                    _raise(
+                        ls,
+                        f"window[{ls}] = {self._window[ls]} must be a whole "
+                        "number of hours >= 1",
+                    )
+                if not arrival.has_values:
+                    _raise(
+                        ls,
+                        f"arrival_flex[{ls}] profile is mandatory for rolling "
+                        "deadlines (right-hand side of (3a))",
+                    )
+            else:  # CALENDAR
+                if ls in self._window:
+                    _raise(ls, f"window[{ls}] is only allowed for rolling")
+                hours = self._deadline_hours.get(ls, [])
+                if len(hours) == 0:
+                    _raise(ls, f"deadline_hours[{ls}] is mandatory for calendar")
+                if any(hh < 0 or hh > 23 for hh in hours):
+                    _raise(ls, f"deadline_hours[{ls}] = {hours} must be in 0..23")
+            # Consistency of (4): max_below_abs should equal arrival_flex
+            # (both theta_w * a_w). Warning only, the model uses each as given.
+            below = self._max_below_abs[ls]
+            if arrival.has_values and (
+                not below.has_values
+                or any(
+                    abs(
+                        below.get_value(t).to_float(unit=ec_unit / TimeUnit.H)
+                        - arrival.get_value(t).to_float(unit=ec_unit / TimeUnit.H)
+                    )
+                    > 1e-6
+                    for t in times.ids
+                )
+            ):
+                logging.log_warning(
+                    f"max_below_abs[{ls}] differs from arrival_flex[{ls}]. "
+                    "Spec 05 (4) expects both to be theta_w * a_w(t).",
+                    module=LOG_MODULE_STR,
+                )
 
     def _validate_stage(self, stages: Stages) -> None:
         for ls, stage_set in self._stages.items():

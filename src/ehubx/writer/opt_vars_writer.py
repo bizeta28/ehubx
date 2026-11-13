@@ -179,7 +179,11 @@ def _extract_set_components(pyomo_set: Set) -> List[str]:
             "S_LoadShiftingTuples",
         ):
             return ["S_Stage", "S_Hub", "S_Ec"]
-        elif name in ["S_LoadShiftingWithTuples", "S_LoadShiftingWithTuplesFix"]:
+        elif name in [
+            "S_LoadShiftingWithTuples",
+            "S_LoadShiftingWithTuplesFix",
+            "S_LoadShiftingBacklog",
+        ]:
             return ["S_LoadShiftingIds", "S_Stage", "S_Hub", "S_Ec"]
         elif name in {"S_NetLinkOut", "S_NetLinkIn"}:
             return ["S_Hub", "S_NetLink", "S_Ec"]

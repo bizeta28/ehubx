@@ -12,12 +12,12 @@ from pyomo.core import (
     Var,
 )
 
-from ehubx.core import common, logging
+from ehubx.core import common, exceptions, logging
 from ehubx.data.demand_data import Demands
 from ehubx.data.ec_data import EcId, Ecs
 from ehubx.data.energy_system_data import EnergySystem
 from ehubx.data.hub_data import HubId
-from ehubx.data.load_shifting_data import LoadShiftId, LoadShifting
+from ehubx.data.load_shifting_data import DeadlineType, LoadShiftId, LoadShifting
 from ehubx.data.stage_data import StageId
 from ehubx.data.time_data import TimeId, Times
 from ehubx.data.unit import (
@@ -165,6 +165,41 @@ CON_LOADSHIFTINGCOSTFIX: str = "C_LoadShiftingCostFix"
 CON_LOADSHIFTINGCOSTTOTAL: str = "C_LoadShiftingCostTotal"
 """Name of constraint setting the total load shifting costs"""
 
+# ---------------------------------------------------------------------- #
+# Backlog mode (docs/semester_project/formulation/05_workload_flexibility.md)
+# ---------------------------------------------------------------------- #
+DT_H: float = 1.0
+"""Time step length Delta t [h]. The backlog mode assumes hourly steps."""
+
+SET_LOADSHIFTINGBACKLOG: str = "S_LoadShiftingBacklog"
+"""Name of set with load shifting tuples (ls, s, h, e) in mode 'backlog'"""
+
+VAR_LOADSHIFTINGBACKLOG: str = "V_LoadShiftingBacklog"
+"""Name of variable for the backlog B_w(t) [ec_unit, e.g. kWh] at the end of
+hour t (spec 05, (1)-(2))"""
+
+VAR_LOADSHIFTINGLATE: str = "V_LoadShiftingLate"
+"""Name of variable for the overdue backlog L_w(t) [ec_unit, e.g. kWh]
+(spec 05, (3a)/(3b))"""
+
+VAR_LOADSHIFTINGCOSTLATE: str = "V_LoadShiftingCostLate"
+"""Name of variable for the lateness penalty sum_t pi_w L_w(t) dt [CHF]"""
+
+VAR_LOADSHIFTINGCOSTBACKLOG: str = "V_LoadShiftingCostBacklog"
+"""Name of variable for the backlog tie-break cost sum_t eps B_w(t) dt [CHF]"""
+
+CON_LOADSHIFTINGBACKLOG: str = "C_LoadShiftingBacklog"
+"""Name of constraint for the backlog balance (spec 05, (1))"""
+
+CON_LOADSHIFTINGDEADLINE: str = "C_LoadShiftingDeadline"
+"""Name of constraint for the rolling / calendar deadline (spec 05, (3a)/(3b))"""
+
+CON_LOADSHIFTINGCOSTLATE: str = "C_LoadShiftingCostLate"
+"""Name of constraint defining V_LoadShiftingCostLate (spec 05, (8))"""
+
+CON_LOADSHIFTINGCOSTBACKLOG: str = "C_LoadShiftingCostBacklog"
+"""Name of constraint defining V_LoadShiftingCostBacklog (spec 05, (8))"""
+
 
 def build(model: Model, system: EnergySystem) -> None:
     """
@@ -195,6 +230,20 @@ def build(model: Model, system: EnergySystem) -> None:
         model,
         ecs,
         demands,
+        load_shifting,
+        times,
+        currency_unit,
+        mass_unit,
+        power_unit,
+        length_unit,
+        passenger_unit,
+        freight_unit,
+    )
+    # Backlog mode (spec 05). Must run after _build_base (needs
+    # V_LoadShifting) and before _build_cost (cost total uses its variables).
+    _build_backlog(
+        model,
+        ecs,
         load_shifting,
         times,
         currency_unit,
@@ -276,6 +325,20 @@ def _build_base(
                     for (s, h) in load_shifting.get_stage_hub_tuples(ls)
                 }
             ),
+        ),
+    )
+    # [SET] Load shifting tuples (ls, s, h, e) in mode 'backlog' (spec 05).
+    #       Built here because the interval constraints below skip them.
+    setattr(
+        model,
+        SET_LOADSHIFTINGBACKLOG,
+        Set(
+            within=getattr(model, SET_LOADSHIFTINGWITHTUPLES),
+            initialize=[
+                (ls, s, h, e)
+                for (ls, s, h, e) in getattr(model, SET_LOADSHIFTINGWITHTUPLES)
+                if load_shifting.is_backlog(LoadShiftId(ls))
+            ],
         ),
     )
     # [VAR] Load shifting amount per (ls, s, h, e) tuple
@@ -457,6 +520,180 @@ def _build_cost(
     _con_load_shifting_cost_total(model)
 
 
+def _build_backlog(
+    model: Model,
+    ecs: Ecs,
+    load_shifting: LoadShifting,
+    times: Times,
+    currency_unit: CurrencyUnit,
+    mass_unit: MassUnit,
+    power_unit: PowerUnit,
+    length_unit: LengthUnit,
+    passenger_unit: PassengerUnit,
+    freight_unit: FreightUnit,
+) -> None:
+    """
+    Backlog mode of load shifting, docs/semester_project/formulation/
+    05_workload_flexibility.md. Uses the shift s_w(t) = V_LoadShifting and adds
+        (1)  B(t) = B(t-1) - s(t) * dt,  B(0) = 0
+        (2)  B(t) >= 0                                   [variable domain]
+        (3a) B(t) <= sum_{tau=max(1,t-W+1)}^{t} arrival_flex(tau) dt + L(t)
+        (3b) B(t) <= L(t)  for t in deadline hours
+        (8)  cost  sum_t (pi * L(t) + eps * B(t)) dt
+    (4), (5), (6), (7) need no new constraint: they are the max_below_abs and
+    max_above_abs profiles, the DC capacity and C_LoadShiftingNeutralityOverall.
+    """
+    backlog_set = getattr(model, SET_LOADSHIFTINGBACKLOG)
+    time_set = getattr(model, SET_TIME)
+    # [VAR] Cost variables are needed by _con_load_shifting_cost_total even if
+    #       there is no backlog-mode tuple (then they are empty).
+    setattr(model, VAR_LOADSHIFTINGCOSTLATE, Var(backlog_set, domain=Reals))
+    setattr(model, VAR_LOADSHIFTINGCOSTBACKLOG, Var(backlog_set, domain=Reals))
+    if len(backlog_set) == 0:
+        return
+
+    # Guard (spec 05 §4, item 7 and §5.1, §5.4): the backlog chain needs a
+    # chronological horizon of consecutive hourly steps with weight 1.
+    _assert_chronological(model, times, backlog_set)
+    t_first = time_set.first()
+
+    def _ec_unit(e):
+        return get_ec_model_unit(
+            ecs.get_unit(EcId(e)),
+            mass_unit,
+            power_unit,
+            length_unit,
+            passenger_unit,
+            freight_unit,
+        )
+
+    # [VAR] (2) Backlog B_w(t) >= 0 [ec_unit, e.g. kWh], end of hour t
+    setattr(
+        model,
+        VAR_LOADSHIFTINGBACKLOG,
+        Var(backlog_set, time_set, domain=NonNegativeReals),
+    )
+    # [VAR] Overdue backlog L_w(t) >= 0 [ec_unit, e.g. kWh]
+    setattr(
+        model,
+        VAR_LOADSHIFTINGLATE,
+        Var(backlog_set, time_set, domain=NonNegativeReals),
+    )
+
+    # [CON] (1) Backlog balance B(t) = B(t-1) - s(t) * dt, with B(0) = 0.
+    #       s = V_LoadShifting [ec_unit/h]; s < 0 means work is deferred.
+    def __rule_backlog(model, ls, s, h, e, t):
+        var_b = getattr(model, VAR_LOADSHIFTINGBACKLOG)
+        var_s = getattr(model, VAR_LOADSHIFTING)
+        prev = 0 if t == t_first else var_b[ls, s, h, e, t - 1]
+        return var_b[ls, s, h, e, t] == prev - var_s[ls, s, h, e, t] * DT_H
+
+    setattr(
+        model,
+        CON_LOADSHIFTINGBACKLOG,
+        Constraint(backlog_set, time_set, rule=__rule_backlog),
+    )
+
+    # Rolling right-hand side of (3a): a constant per (ls, t). Prefix sums of
+    # arrival_flex [ec_unit/h] * dt, so each rhs costs O(1) instead of O(W).
+    rolling_rhs = {}
+    for ls, s, h, e in backlog_set:
+        lsid = LoadShiftId(ls)
+        if load_shifting.get_deadline_type(lsid) != DeadlineType.ROLLING:
+            continue
+        window = round(load_shifting.get_window(lsid).to_float(unit=TimeUnit.H))
+        arrival = load_shifting.get_arrival_flex(lsid)
+        unit = _ec_unit(e) / TimeUnit.H
+        cum = {t_first - 1: 0.0}
+        for t in time_set:
+            cum[t] = cum[t - 1] + arrival.get_value(TimeId(t)).to_float(unit=unit) * DT_H
+        for t in time_set:
+            start = max(t_first, t - window + 1)
+            rolling_rhs[ls, s, h, e, t] = cum[t] - cum[start - 1]
+
+    # [CON] (3a) rolling:  B(t) <= sum of arrivals in the last W hours + L(t)
+    #       (3b) calendar: B(t) <= L(t) at each deadline hour of the day.
+    #       Hour of day as in the spec sketch: (t - t_first) % 24, with
+    #       t_first taken as 00:00 (see CHANGES.md for the open convention).
+    def __rule_deadline(model, ls, s, h, e, t):
+        lsid = LoadShiftId(ls)
+        var_b = getattr(model, VAR_LOADSHIFTINGBACKLOG)[ls, s, h, e, t]
+        var_l = getattr(model, VAR_LOADSHIFTINGLATE)[ls, s, h, e, t]
+        if load_shifting.get_deadline_type(lsid) == DeadlineType.ROLLING:
+            return var_b <= rolling_rhs[ls, s, h, e, t] + var_l
+        hour_of_day = (t - t_first) % 24
+        if hour_of_day not in load_shifting.get_deadline_hours(lsid):
+            return Constraint.Skip
+        return var_b <= var_l
+
+    setattr(
+        model,
+        CON_LOADSHIFTINGDEADLINE,
+        Constraint(backlog_set, time_set, rule=__rule_deadline),
+    )
+
+    # [CON] (8) Lateness penalty sum_t pi * L(t) * dt [CHF] and backlog
+    #       tie-break sum_t eps * B(t) * dt [CHF]. Both cost parameters are in
+    #       CHF/(ec_unit*h); weights are 1 (guarded above).
+    def __cost_coeff(ls, e, getter):
+        unit = currency_unit / (_ec_unit(e) * TimeUnit.H)
+        return getter(LoadShiftId(ls)).to_float(unit=unit)
+
+    def __rule_cost_late(model, ls, s, h, e):
+        pi = __cost_coeff(ls, e, load_shifting.get_late_cost)
+        var_l = getattr(model, VAR_LOADSHIFTINGLATE)
+        return getattr(model, VAR_LOADSHIFTINGCOSTLATE)[ls, s, h, e] == sum(
+            pi * var_l[ls, s, h, e, t] * DT_H for t in time_set
+        )
+
+    def __rule_cost_backlog(model, ls, s, h, e):
+        eps = __cost_coeff(ls, e, load_shifting.get_backlog_cost)
+        var_b = getattr(model, VAR_LOADSHIFTINGBACKLOG)
+        return getattr(model, VAR_LOADSHIFTINGCOSTBACKLOG)[ls, s, h, e] == sum(
+            eps * var_b[ls, s, h, e, t] * DT_H for t in time_set
+        )
+
+    setattr(
+        model,
+        CON_LOADSHIFTINGCOSTLATE,
+        Constraint(backlog_set, rule=__rule_cost_late),
+    )
+    setattr(
+        model,
+        CON_LOADSHIFTINGCOSTBACKLOG,
+        Constraint(backlog_set, rule=__rule_cost_backlog),
+    )
+
+
+def _assert_chronological(model: Model, times: Times, backlog_set) -> None:
+    """
+    Raise if the time horizon is not a plain chronological hourly series:
+    no clustering, consecutive integer time ids, all weights equal to 1.
+    The backlog chain B(t-1) -> B(t) is meaningless on clustered typical days.
+    """
+    time_ids = list(getattr(model, SET_TIME))
+    reason = None
+    if times.is_clustered:
+        reason = "the time series is clustered"
+    elif time_ids != list(range(time_ids[0], time_ids[-1] + 1)):
+        reason = "the time ids are not consecutive integers"
+    else:
+        stages = {s for (_, s, _, _) in backlog_set}
+        for s in stages:
+            for t in time_ids:
+                if abs(times.get_weight(StageId(s), TimeId(t)) - 1) > common.EPS_ZEROCHECK:
+                    reason = f"time step {t} of stage {s} has a weight != 1"
+                    break
+            if reason:
+                break
+    if reason is not None:
+        raise exceptions.EhubXException(
+            f"Load shifting mode 'backlog' needs a chronological horizon without "
+            f"clustering, but {reason}.",
+            module=LOG_MODULE_STR,
+        )
+
+
 def _con_load_shifting_total(model: Model) -> None:
     def __rule_load_shifting_total(model, s, h, e, t):
         # Get the sum of all load shifts
@@ -483,6 +720,9 @@ def _con_load_shifting_neutrality_on_intervals(
     model: Model, load_shifting: LoadShifting, times: Times
 ) -> None:
     def __rule_load_shifting_neutrality_on_intervals(model, ls, s, h, e, t_hor):
+        # Backlog mode (spec 05 §4, item 6): no interval blocks
+        if (ls, s, h, e) in getattr(model, SET_LOADSHIFTINGBACKLOG):
+            return Constraint.Skip
         # Get parameters
         interval_length = round(
             load_shifting.get_interval_length(LoadShiftId(ls)).to_float(unit=TimeUnit.H)
@@ -746,6 +986,9 @@ def _con_load_shifting_interval_cap(
     model: Model, load_shifting: LoadShifting, times: Times
 ) -> None:
     def __rule_load_shifting_interval_cap(model, ls, s, h, e, t_hor):
+        # Backlog mode (spec 05 §4, item 6): no interval blocks
+        if (ls, s, h, e) in getattr(model, SET_LOADSHIFTINGBACKLOG):
+            return Constraint.Skip
         # Get parameters
         interval_length = round(
             load_shifting.get_interval_length(LoadShiftId(ls)).to_float(unit=TimeUnit.H)
@@ -1118,6 +1361,13 @@ def _con_load_shifting_cost_total(model: Model) -> None:
         load_shifting_cost_total += sum(
             getattr(model, VAR_LOADSHIFTINGCOSTFIX)[ls, s, h, e]
             for (ls, s, h, e) in getattr(model, SET_LOADSHIFTINGWITHTUPLESFIX)
+        )
+        # Backlog mode (spec 05, objective (8)): lateness penalty and backlog
+        # tie-break cost. They enter V_SystemCost through this total.
+        load_shifting_cost_total += sum(
+            getattr(model, VAR_LOADSHIFTINGCOSTLATE)[ls, s, h, e]
+            + getattr(model, VAR_LOADSHIFTINGCOSTBACKLOG)[ls, s, h, e]
+            for (ls, s, h, e) in getattr(model, SET_LOADSHIFTINGBACKLOG)
         )
         # Set constraint
         return getattr(model, VAR_LOADSHIFTINGCOSTTOTAL) == load_shifting_cost_total

@@ -46,6 +46,27 @@ SOURCE: str = "load shifting"
 ENTRY_INTERVALLENGTH: str = "Interval length (interval_length)"
 """Entry name for load shifting parameter 'interval_length' in result files"""
 
+ENTRY_LOADSHIFTINGBACKLOG: str = (
+    f"Load shifting backlog ({load_shifting_model.VAR_LOADSHIFTINGBACKLOG})"
+)
+"""Entry name for the backlog B(t) (spec 05) in result files"""
+
+ENTRY_LOADSHIFTINGLATE: str = (
+    f"Load shifting overdue backlog ({load_shifting_model.VAR_LOADSHIFTINGLATE})"
+)
+"""Entry name for the overdue backlog L(t) (spec 05) in result files"""
+
+ENTRY_LOADSHIFTINGCOSTLATE: str = (
+    f"Load shifting lateness penalty ({load_shifting_model.VAR_LOADSHIFTINGCOSTLATE})"
+)
+"""Entry name for the lateness penalty (spec 05) in result files"""
+
+ENTRY_LOADSHIFTINGCOSTBACKLOG: str = (
+    "Load shifting backlog tie-break cost "
+    f"({load_shifting_model.VAR_LOADSHIFTINGCOSTBACKLOG})"
+)
+"""Entry name for the backlog tie-break cost (spec 05) in result files"""
+
 ENTRY_CAPMIN: str = "Minimal load shifting capacity (cap_min)"
 """Entry name for load shifting parameter 'cap_min' in result files"""
 
@@ -203,20 +224,74 @@ def _format_ls_and_tuple(
         energy_system.passenger_unit,
         energy_system.freight_unit,
     )
-    # interval_length
-    interval_length = energy_system.load_shifting.get_interval_length(ls)
-    interval_length_unit = TimeUnit.H
-    df_st_builder.add_row(
-        ENTRY_INTERVALLENGTH,
-        interval_length,
-        unit=interval_length_unit,
-        load_shift=ls.key,
-        stage=s.key,
-        hub=h.key,
-        ec=e.key,
-        source=SOURCE,
-        in_res="input",
-    )
+    # interval_length (not used, and possibly not set, in backlog mode)
+    if energy_system.load_shifting.has_interval_length(ls):
+        interval_length = energy_system.load_shifting.get_interval_length(ls)
+        interval_length_unit = TimeUnit.H
+        df_st_builder.add_row(
+            ENTRY_INTERVALLENGTH,
+            interval_length,
+            unit=interval_length_unit,
+            load_shift=ls.key,
+            stage=s.key,
+            hub=h.key,
+            ec=e.key,
+            source=SOURCE,
+            in_res="input",
+        )
+
+    # Backlog mode (spec 05): B(t), L(t) time series and the two cost terms
+    if (ls.key, s.key, h.key, e.key) in getattr(
+        model, load_shifting_model.SET_LOADSHIFTINGBACKLOG
+    ):
+        for var_name, entry in (
+            (load_shifting_model.VAR_LOADSHIFTINGBACKLOG, ENTRY_LOADSHIFTINGBACKLOG),
+            (load_shifting_model.VAR_LOADSHIFTINGLATE, ENTRY_LOADSHIFTINGLATE),
+        ):
+            var = getattr(model, var_name)
+            series = TimeSeries()
+            for t in energy_system.times.ids:
+                val_fl = value(
+                    var[ls.key, s.key, h.key, e.key, t.key_as_int], exception=False
+                )
+                if val_fl is not None:
+                    series.set_value(t, Value(val_fl, ec_unit))
+            add_to_df_ts_cl(
+                df_ts_hor,
+                df_ts_cl,
+                energy_system.times,
+                entry,
+                series,
+                unit=ec_unit,
+                stage=s.key,
+                hub=h.key,
+                ec=e.key,
+                load_shift=ls.key,
+                source=SOURCE,
+                in_res="result",
+            )
+        for var_name, entry in (
+            (load_shifting_model.VAR_LOADSHIFTINGCOSTLATE, ENTRY_LOADSHIFTINGCOSTLATE),
+            (
+                load_shifting_model.VAR_LOADSHIFTINGCOSTBACKLOG,
+                ENTRY_LOADSHIFTINGCOSTBACKLOG,
+            ),
+        ):
+            cost_fl = value(
+                getattr(model, var_name)[ls.key, s.key, h.key, e.key], exception=False
+            )
+            if cost_fl is not None:
+                df_st_builder.add_row(
+                    entry,
+                    Value(cost_fl, unit=energy_system.currency_unit),
+                    unit=energy_system.currency_unit,
+                    stage=s.key,
+                    hub=h.key,
+                    ec=e.key,
+                    load_shift=ls.key,
+                    source=SOURCE,
+                    in_res="result",
+                )
 
     # cap_min
     cap_min = energy_system.load_shifting.get_cap_min(ls)

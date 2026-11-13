@@ -7,7 +7,12 @@ import ehubx.data.exceptions as data_exceptions
 from ehubx.core import logging
 from ehubx.data.ec_data import EcId, Ecs
 from ehubx.data.hub_data import HubId
-from ehubx.data.load_shifting_data import LoadShiftId, LoadShifting
+from ehubx.data.load_shifting_data import (
+    DeadlineType,
+    LoadShiftId,
+    LoadShifting,
+    LoadShiftMode,
+)
 from ehubx.data.stage_data import StageId
 from ehubx.data.time_data import TimeId
 from ehubx.data.unit import CurrencyUnit, DimlessUnit, TimeUnit, Unit
@@ -36,6 +41,14 @@ YAMLKEY_PEAKCOSTABOVE = "peak_cost_above"
 YAMLKEY_PEAKCOSTBELOW = "peak_cost_below"
 YAMLKEY_FIXCOST = "fix_cost"
 YAMLKEY_PROFILEPATH = "profile_path"
+# Backlog mode (formulation/05_workload_flexibility.md)
+YAMLKEY_MODE = "mode"
+YAMLKEY_DEADLINETYPE = "deadline_type"
+YAMLKEY_WINDOW = "window"
+YAMLKEY_DEADLINEHOURS = "deadline_hours"
+YAMLKEY_LATECOST = "late_cost"
+YAMLKEY_BACKLOGCOST = "backlog_cost"
+YAMLKEY_ARRIVALFLEX = "arrival_flex"  # profile key only
 
 # Literals
 LOG_MODULE_STR: str = "pars/load_shift"
@@ -96,11 +109,65 @@ def _parse_node(
     # hubs
     for hub_id in hub_ids:
         load_shifting.add_hub(load_shift_id, hub_id)
-    # interval_length
-    interval_length = yaml_parser.parse_mandatory_value_from_dict_node(
+    # mode (spec 05): 'interval' (default, original formulation) or 'backlog'
+    mode_str = yaml_parser.parse_optional_str_from_dict_node(node, YAMLKEY_MODE)
+    mode = _parse_enum(node, YAMLKEY_MODE, mode_str, LoadShiftMode)
+    if mode is not None:
+        load_shifting.set_mode(load_shift_id, mode)
+    # interval_length: mandatory in interval mode, not used in backlog mode.
+    # Its presence is checked in LoadShifting.validate.
+    interval_length = yaml_parser.parse_optional_value_from_dict_node(
         node, YAMLKEY_INTERVALLENGTH, expected_unit=TimeUnit.H
     )
-    load_shifting.set_interval_length(load_shift_id, interval_length)
+    if interval_length is not None:
+        load_shifting.set_interval_length(load_shift_id, interval_length)
+    elif not load_shifting.is_backlog(load_shift_id):
+        # keep the original parser error for interval mode
+        yaml_parser.parse_mandatory_value_from_dict_node(
+            node, YAMLKEY_INTERVALLENGTH, expected_unit=TimeUnit.H
+        )
+    # Backlog-mode parameters (spec 05 §4). Read in any mode, so that
+    # LoadShifting.validate can reject them in interval mode.
+    deadline_type_str = yaml_parser.parse_optional_str_from_dict_node(
+        node, YAMLKEY_DEADLINETYPE
+    )
+    deadline_type = _parse_enum(
+        node, YAMLKEY_DEADLINETYPE, deadline_type_str, DeadlineType
+    )
+    if deadline_type is not None:
+        load_shifting.set_deadline_type(load_shift_id, deadline_type)
+    window = yaml_parser.parse_optional_value_from_dict_node(
+        node, YAMLKEY_WINDOW, expected_unit=TimeUnit.H
+    )
+    if window is not None:
+        load_shifting.set_window(load_shift_id, window)
+    deadline_hours_str = yaml_parser.parse_str_list_from_dict_node(
+        node, YAMLKEY_DEADLINEHOURS, optional=True
+    )
+    if deadline_hours_str:
+        try:
+            deadline_hours = [int(str(hh)) for hh in deadline_hours_str]
+        except ValueError as exc:
+            raise exceptions.ParsingException(
+                node.file_path,
+                f"{YAMLKEY_DEADLINEHOURS} of load shift id {load_shift_id} must be "
+                f"a list of integer hours of the day, got {deadline_hours_str}",
+                module=LOG_MODULE_STR,
+            ) from exc
+        load_shifting.set_deadline_hours(load_shift_id, deadline_hours)
+    # late_cost (pi_w) and backlog_cost (epsilon): cost per unit of backlog
+    # per hour, e.g. 'CHF/kWh/h' for an ec in kWh (spec 05 §2 table)
+    cost_unit = CurrencyUnit.CHF / (ec_unit * TimeUnit.H)
+    late_cost = yaml_parser.parse_optional_value_from_dict_node(
+        node, YAMLKEY_LATECOST, expected_unit=cost_unit
+    )
+    if late_cost is not None:
+        load_shifting.set_late_cost(load_shift_id, late_cost)
+    backlog_cost = yaml_parser.parse_optional_value_from_dict_node(
+        node, YAMLKEY_BACKLOGCOST, expected_unit=cost_unit
+    )
+    if backlog_cost is not None:
+        load_shifting.set_backlog_cost(load_shift_id, backlog_cost)
     # max_above_abs
     max_above_abs = yaml_parser.parse_optional_value_from_dict_node(
         node, YAMLKEY_MAXABOVEABS, expected_unit=(ec_unit / TimeUnit.H)
@@ -217,6 +284,20 @@ def _parse_node(
         )
 
 
+def _parse_enum(node, key: str, value_str: Optional[str], enum_cls):
+    """Map an optional YAML string onto an Enum member by its value."""
+    if value_str is None:
+        return None
+    allowed = [m.value for m in enum_cls]
+    if str(value_str).strip() not in allowed:
+        raise exceptions.ParsingException(
+            node.file_path,
+            f"Invalid value '{value_str}' for '{key}'. Allowed: {allowed}",
+            module=LOG_MODULE_STR,
+        )
+    return enum_cls(str(value_str).strip())
+
+
 def _parse_profiles(
     df_profiles: pd.DataFrame,
     profile_path: str,
@@ -239,7 +320,7 @@ def _parse_profiles(
 
         expected_unit: Unit
         check_unit: bool = True
-        if key in {YAMLKEY_MAXABOVEABS, YAMLKEY_MAXBELOWABS}:
+        if key in {YAMLKEY_MAXABOVEABS, YAMLKEY_MAXBELOWABS, YAMLKEY_ARRIVALFLEX}:
             expected_unit = ec_unit / TimeUnit.H
         elif key in {YAMLKEY_MAXABOVEREL, YAMLKEY_MAXBELOWREL}:
             expected_unit = DimlessUnit()
@@ -298,6 +379,12 @@ def _parse_profiles(
         if key == YAMLKEY_FIXCOST:
             for t, val in df_profiles[ls, key].items():
                 load_shifting.set_fix_cost(load_shift_id, TimeId(t), Value(val, unit))
+        # arrival_flex = theta_w * a_w(t) (spec 05, rhs of (3a))
+        if key == YAMLKEY_ARRIVALFLEX:
+            for t, val in df_profiles[ls, key].items():
+                load_shifting.set_arrival_flex(
+                    load_shift_id, TimeId(t), Value(val, unit)
+                )
 
 
 def _log(load_shifting: LoadShifting) -> None:
@@ -305,10 +392,16 @@ def _log(load_shifting: LoadShifting) -> None:
         f"Parsed {len(load_shifting.ids)} load shift id(s)", module=LOG_MODULE_STR
     )
     for ls in load_shifting.ids:
+        if load_shifting.is_backlog(ls):
+            detail = "mode = backlog"
+        elif load_shifting.has_interval_length(ls):
+            detail = f"interval_length = {load_shifting.get_interval_length(ls)}"
+        else:
+            detail = "interval_length missing"
         logging.log_file(
             (
                 f"  Load shift {ls}: Tuples {load_shifting.get_stage_hub_tuples(ls)}, "
-                f"interval_length = {load_shifting.get_interval_length(ls)}"
+                f"{detail}"
             ),
             print_time=False,
         )
